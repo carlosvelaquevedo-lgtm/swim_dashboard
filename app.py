@@ -730,10 +730,18 @@ def main():
             pdf_buf = generate_pdf_report(summary, uploaded.name, plot_buf)
             csv_buf = export_to_csv(analyzer)
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Read video into memory before creating zip and displaying
+            video_bytes = None
+            if os.path.exists(out_path):
+                with open(out_path, 'rb') as f:
+                    video_bytes = f.read()
+            
             zip_buf = create_results_bundle(out_path, csv_buf, pdf_buf, plot_buf, timestamp, analyzer)
 
             analyzer.close()
 
+            # Now safe to delete the temp file
             try:
                 os.unlink(out_path)
             except:
@@ -763,7 +771,9 @@ def main():
                 if summary.worst_frame_bytes:
                     st.image(summary.worst_frame_bytes, caption="Worst Pull Frame")
 
-            st.video(out_path)
+            # Display video from memory bytes
+            if video_bytes:
+                st.video(video_bytes)
 
             st.download_button(
                 "📦 Download Full Results (ZIP)",
