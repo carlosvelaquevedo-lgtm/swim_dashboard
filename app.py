@@ -1,11 +1,12 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import cv2
 import numpy as np
 import math
 import statistics
 from enum import Enum
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 import tempfile
 import os
 import datetime
@@ -63,6 +64,423 @@ CUSTOM_CSS = """
     .phase-recovery { background: #6b7280; color: white; }
 </style>
 """
+
+# ─────────────────────────────────────────────
+# SWIM METRICS VISUALIZATION COMPONENT
+# ─────────────────────────────────────────────
+
+def get_viz_zone_class(value, good_range, ok_range):
+    """Return CSS class based on value zone"""
+    if good_range[0] <= value <= good_range[1]:
+        return "good"
+    elif ok_range[0] <= value <= ok_range[1]:
+        return "ok"
+    return "bad"
+
+def get_viz_zone_label(value, good_range, ok_range):
+    """Return label based on value zone"""
+    if good_range[0] <= value <= good_range[1]:
+        return "✓ Good"
+    elif ok_range[0] <= value <= ok_range[1]:
+        return "◐ OK"
+    return "✗ Fix"
+
+def get_viz_zone_color(value, good_range, ok_range):
+    """Return hex color based on value zone"""
+    if good_range[0] <= value <= good_range[1]:
+        return "#22c55e"
+    elif ok_range[0] <= value <= ok_range[1]:
+        return "#eab308"
+    return "#ef4444"
+
+def get_alignment_silhouette(deviation):
+    """Generate SVG for body alignment visualization"""
+    color = get_viz_zone_color(deviation, (0, 8), (0, 15))
+    offset = deviation * 1.5
+    
+    return f'''
+    <svg viewBox="0 0 100 140" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+            <filter id="glow1" x="-50%" y="-50%" width="200%" height="200%">
+                <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+                <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <linearGradient id="bodyGrad1" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:{color};stop-opacity:0.8" />
+                <stop offset="100%" style="stop-color:{color};stop-opacity:0.4" />
+            </linearGradient>
+        </defs>
+        <line x1="50" y1="5" x2="50" y2="135" stroke="white" stroke-width="1" stroke-dasharray="4,4" opacity="0.3"/>
+        <g filter="url(#glow1)">
+            <ellipse cx="50" cy="18" rx="10" ry="12" fill="url(#bodyGrad1)"/>
+            <rect x="46" y="28" width="8" height="8" fill="{color}" opacity="0.7"/>
+            <ellipse cx="50" cy="42" rx="22" ry="8" fill="url(#bodyGrad1)"/>
+            <ellipse cx="{50 + offset * 0.3}" cy="65" rx="18" ry="20" fill="url(#bodyGrad1)"/>
+            <ellipse cx="{50 + offset * 0.6}" cy="90" rx="16" ry="10" fill="url(#bodyGrad1)"/>
+            <ellipse cx="{42 + offset * 0.8}" cy="115" rx="7" ry="20" fill="{color}" opacity="0.6"/>
+            <ellipse cx="{58 + offset * 0.8}" cy="115" rx="7" ry="20" fill="{color}" opacity="0.6"/>
+        </g>
+        <circle cx="50" cy="18" r="3" fill="white" opacity="0.8"/>
+        <circle cx="{50 + offset * 0.5}" cy="65" r="3" fill="white" opacity="0.8"/>
+        <circle cx="{50 + offset * 0.8}" cy="115" r="3" fill="white" opacity="0.8"/>
+        <line x1="50" y1="18" x2="{50 + offset * 0.5}" y2="65" stroke="{color}" stroke-width="2"/>
+        <line x1="{50 + offset * 0.5}" y1="65" x2="{50 + offset * 0.8}" y2="115" stroke="{color}" stroke-width="2"/>
+    </svg>
+    '''
+
+def get_evf_silhouette(angle):
+    """Generate SVG for EVF visualization"""
+    color = get_viz_zone_color(angle, (0, 25), (0, 40))
+    forearm_length = 35
+    forearm_end_x = 55 + forearm_length * math.sin(math.radians(angle))
+    forearm_end_y = 55 + forearm_length * math.cos(math.radians(angle))
+    
+    return f'''
+    <svg viewBox="0 0 100 140" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+            <filter id="glow2" x="-50%" y="-50%" width="200%" height="200%">
+                <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+                <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <linearGradient id="bodyGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:{color};stop-opacity:0.8" />
+                <stop offset="100%" style="stop-color:{color};stop-opacity:0.4" />
+            </linearGradient>
+        </defs>
+        <line x1="0" y1="30" x2="100" y2="30" stroke="#0ea5e9" stroke-width="2" opacity="0.5"/>
+        <text x="5" y="25" fill="#0ea5e9" font-size="8" opacity="0.7">water</text>
+        <line x1="55" y1="55" x2="55" y2="95" stroke="white" stroke-width="1" stroke-dasharray="3,3" opacity="0.3"/>
+        <g filter="url(#glow2)">
+            <ellipse cx="30" cy="35" rx="10" ry="8" fill="url(#bodyGrad2)"/>
+            <ellipse cx="45" cy="55" rx="20" ry="12" fill="url(#bodyGrad2)" transform="rotate(-15, 45, 55)"/>
+            <line x1="35" y1="50" x2="20" y2="25" stroke="{color}" stroke-width="6" stroke-linecap="round" opacity="0.4"/>
+            <circle cx="55" cy="48" r="5" fill="{color}"/>
+            <line x1="55" y1="48" x2="55" y2="55" stroke="{color}" stroke-width="7" stroke-linecap="round"/>
+            <circle cx="55" cy="55" r="4" fill="{color}"/>
+            <line x1="55" y1="55" x2="{forearm_end_x}" y2="{forearm_end_y}" stroke="{color}" stroke-width="6" stroke-linecap="round"/>
+            <ellipse cx="{forearm_end_x}" cy="{forearm_end_y + 5}" rx="5" ry="8" fill="{color}"/>
+            <ellipse cx="60" cy="70" rx="12" ry="8" fill="url(#bodyGrad2)"/>
+            <line x1="65" y1="75" x2="85" y2="110" stroke="{color}" stroke-width="8" stroke-linecap="round" opacity="0.6"/>
+            <line x1="55" y1="75" x2="75" y2="115" stroke="{color}" stroke-width="8" stroke-linecap="round" opacity="0.6"/>
+        </g>
+        <text x="{60 + 10 * math.sin(math.radians(angle/2))}" y="{62 + 10 * math.cos(math.radians(angle/2))}" fill="white" font-size="8">{angle:.0f}°</text>
+    </svg>
+    '''
+
+def get_roll_silhouette(roll_angle):
+    """Generate SVG for body roll visualization"""
+    color = get_viz_zone_color(roll_angle, (35, 55), (25, 65))
+    display_angle = roll_angle - 45
+    cos_val = math.cos(math.radians(display_angle))
+    sin_val = math.sin(math.radians(display_angle))
+    
+    return f'''
+    <svg viewBox="0 0 100 140" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+            <filter id="glow3" x="-50%" y="-50%" width="200%" height="200%">
+                <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+                <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <linearGradient id="bodyGrad3" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:{color};stop-opacity:0.8" />
+                <stop offset="100%" style="stop-color:{color};stop-opacity:0.4" />
+            </linearGradient>
+        </defs>
+        <text x="50" y="12" fill="#64748b" font-size="8" text-anchor="middle">TOP VIEW</text>
+        <line x1="50" y1="20" x2="50" y2="130" stroke="white" stroke-width="1" stroke-dasharray="4,4" opacity="0.2"/>
+        <line x1="10" y1="70" x2="90" y2="70" stroke="white" stroke-width="1" stroke-dasharray="4,4" opacity="0.2"/>
+        <polygon points="50,25 45,35 55,35" fill="#64748b" opacity="0.5"/>
+        <g transform="rotate({display_angle}, 50, 70)" filter="url(#glow3)">
+            <ellipse cx="50" cy="30" rx="8" ry="10" fill="url(#bodyGrad3)"/>
+            <ellipse cx="50" cy="50" rx="30" ry="10" fill="url(#bodyGrad3)"/>
+            <ellipse cx="20" cy="40" rx="8" ry="15" fill="{color}" opacity="0.5" transform="rotate(-30, 20, 40)"/>
+            <ellipse cx="80" cy="55" rx="8" ry="15" fill="{color}" opacity="0.5" transform="rotate(20, 80, 55)"/>
+            <ellipse cx="50" cy="70" rx="20" ry="15" fill="url(#bodyGrad3)"/>
+            <ellipse cx="50" cy="90" rx="18" ry="10" fill="url(#bodyGrad3)"/>
+            <ellipse cx="42" cy="110" rx="6" ry="18" fill="{color}" opacity="0.5"/>
+            <ellipse cx="58" cy="115" rx="6" ry="18" fill="{color}" opacity="0.5"/>
+        </g>
+        <g transform="translate(50, 70)">
+            <line x1="0" y1="0" x2="35" y2="0" stroke="white" stroke-width="1" opacity="0.3"/>
+            <line x1="0" y1="0" x2="{35 * cos_val}" y2="{35 * sin_val}" stroke="{color}" stroke-width="2"/>
+        </g>
+    </svg>
+    '''
+
+def get_kick_silhouette(depth, symmetry):
+    """Generate SVG for kick visualization"""
+    color = get_viz_zone_color(depth, (0.15, 0.35), (0.10, 0.45))
+    kick_amplitude = depth * 80
+    sym_offset = symmetry * 0.5
+    
+    return f'''
+    <svg viewBox="0 0 100 140" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+            <filter id="glow4" x="-50%" y="-50%" width="200%" height="200%">
+                <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+                <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <linearGradient id="bodyGrad4" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:{color};stop-opacity:0.8" />
+                <stop offset="100%" style="stop-color:{color};stop-opacity:0.4" />
+            </linearGradient>
+        </defs>
+        <line x1="10" y1="45" x2="90" y2="45" stroke="white" stroke-width="1" stroke-dasharray="4,4" opacity="0.3"/>
+        <g filter="url(#glow4)" opacity="0.4">
+            <ellipse cx="20" cy="40" rx="12" ry="8" fill="{color}"/>
+            <ellipse cx="35" cy="45" rx="15" ry="10" fill="{color}"/>
+        </g>
+        <ellipse cx="55" cy="45" rx="12" ry="10" fill="url(#bodyGrad4)" filter="url(#glow4)"/>
+        <rect x="70" y="{45 - kick_amplitude/2}" width="3" height="{kick_amplitude}" fill="{color}" opacity="0.3" rx="1"/>
+        <g filter="url(#glow4)">
+            <line x1="55" y1="45" x2="90" y2="{45 - kick_amplitude/2 + sym_offset}" stroke="{color}" stroke-width="10" stroke-linecap="round"/>
+            <ellipse cx="92" cy="{45 - kick_amplitude/2 + sym_offset}" rx="6" ry="3" fill="{color}" transform="rotate(-20, 92, {45 - kick_amplitude/2 + sym_offset})"/>
+        </g>
+        <g filter="url(#glow4)" opacity="0.7">
+            <line x1="55" y1="50" x2="90" y2="{50 + kick_amplitude/2 - sym_offset}" stroke="{color}" stroke-width="10" stroke-linecap="round"/>
+            <ellipse cx="92" cy="{50 + kick_amplitude/2 - sym_offset}" rx="6" ry="3" fill="{color}" transform="rotate(20, 92, {50 + kick_amplitude/2 - sym_offset})"/>
+        </g>
+        <text x="75" y="130" fill="#64748b" font-size="8">depth: {depth:.2f}</text>
+        <text x="10" y="130" fill="#64748b" font-size="8">sym: {symmetry:.1f}°</text>
+    </svg>
+    '''
+
+def get_swim_metrics_html(metrics: dict) -> str:
+    """Generate complete HTML for swim metrics visualization"""
+    
+    h_dev = metrics.get('horizontal_deviation', 0)
+    evf = metrics.get('evf_angle', 0)
+    roll = metrics.get('body_roll', 45)
+    kick_d = metrics.get('kick_depth', 0.25)
+    kick_s = metrics.get('kick_symmetry', 0)
+    
+    h_class = get_viz_zone_class(h_dev, (0, 8), (0, 15))
+    h_label = get_viz_zone_label(h_dev, (0, 8), (0, 15))
+    h_color = get_viz_zone_color(h_dev, (0, 8), (0, 15))
+    
+    evf_class = get_viz_zone_class(evf, (0, 25), (0, 40))
+    evf_label = get_viz_zone_label(evf, (0, 25), (0, 40))
+    evf_color = get_viz_zone_color(evf, (0, 25), (0, 40))
+    
+    roll_class = get_viz_zone_class(roll, (35, 55), (25, 65))
+    roll_label = get_viz_zone_label(roll, (35, 55), (25, 65))
+    roll_color = get_viz_zone_color(roll, (35, 55), (25, 65))
+    
+    kick_class = get_viz_zone_class(kick_d, (0.15, 0.35), (0.10, 0.45))
+    kick_label = get_viz_zone_label(kick_d, (0.15, 0.35), (0.10, 0.45))
+    kick_color = get_viz_zone_color(kick_d, (0.15, 0.35), (0.10, 0.45))
+    
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <style>
+            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+            body {{ 
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                background: transparent;
+                color: white;
+                padding: 10px;
+            }}
+            .metrics-grid {{
+                display: grid;
+                grid-template-columns: repeat(2, 1fr);
+                gap: 16px;
+            }}
+            .metric-card {{
+                background: rgba(30, 41, 59, 0.9);
+                border-radius: 16px;
+                padding: 16px;
+                border: 1px solid rgba(100, 116, 139, 0.3);
+            }}
+            .metric-card.good {{ border-left: 4px solid #22c55e; }}
+            .metric-card.ok {{ border-left: 4px solid #eab308; }}
+            .metric-card.bad {{ border-left: 4px solid #ef4444; }}
+            .metric-header {{
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 12px;
+            }}
+            .metric-title {{
+                font-size: 13px;
+                font-weight: 600;
+                color: #94a3b8;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+            }}
+            .metric-badge {{
+                padding: 3px 8px;
+                border-radius: 12px;
+                font-size: 10px;
+                font-weight: 600;
+            }}
+            .metric-badge.good {{ background: rgba(34, 197, 94, 0.2); color: #22c55e; }}
+            .metric-badge.ok {{ background: rgba(234, 179, 8, 0.2); color: #eab308; }}
+            .metric-badge.bad {{ background: rgba(239, 68, 68, 0.2); color: #ef4444; }}
+            .metric-content {{
+                display: flex;
+                gap: 16px;
+                align-items: center;
+            }}
+            .silhouette-container {{
+                width: 80px;
+                height: 110px;
+                flex-shrink: 0;
+            }}
+            .metric-details {{ flex: 1; }}
+            .metric-value {{
+                font-size: 28px;
+                font-weight: 700;
+                line-height: 1;
+                margin-bottom: 4px;
+            }}
+            .metric-value.good {{ color: #22c55e; }}
+            .metric-value.ok {{ color: #eab308; }}
+            .metric-value.bad {{ color: #ef4444; }}
+            .metric-unit {{
+                font-size: 14px;
+                color: #64748b;
+                font-weight: 400;
+            }}
+            .range-bar {{
+                height: 6px;
+                background: #334155;
+                border-radius: 3px;
+                margin: 12px 0 6px 0;
+                position: relative;
+                overflow: hidden;
+            }}
+            .range-zone {{
+                position: absolute;
+                height: 100%;
+                border-radius: 3px;
+            }}
+            .range-zone.ok-zone {{ background: rgba(234, 179, 8, 0.3); }}
+            .range-zone.good-zone {{ background: rgba(34, 197, 94, 0.5); }}
+            .range-indicator {{
+                position: absolute;
+                top: -3px;
+                width: 12px;
+                height: 12px;
+                border-radius: 50%;
+                transform: translateX(-50%);
+                border: 2px solid white;
+                box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            }}
+            .range-labels {{
+                display: flex;
+                justify-content: space-between;
+                font-size: 9px;
+                color: #64748b;
+            }}
+            .range-labels .warn {{ color: #f59e0b; }}
+        </style>
+    </head>
+    <body>
+        <div class="metrics-grid">
+            <!-- Body Alignment -->
+            <div class="metric-card {h_class}">
+                <div class="metric-header">
+                    <span class="metric-title">Body Alignment</span>
+                    <span class="metric-badge {h_class}">{h_label}</span>
+                </div>
+                <div class="metric-content">
+                    <div class="silhouette-container">{get_alignment_silhouette(h_dev)}</div>
+                    <div class="metric-details">
+                        <div class="metric-value {h_class}">{h_dev:.1f}<span class="metric-unit">°</span></div>
+                        <div class="range-bar">
+                            <div class="range-zone ok-zone" style="left: 0%; width: 60%;"></div>
+                            <div class="range-zone good-zone" style="left: 0%; width: 32%;"></div>
+                            <div class="range-indicator" style="left: {min(100, h_dev / 25 * 100):.1f}%; background: {h_color};"></div>
+                        </div>
+                        <div class="range-labels">
+                            <span>Perfect</span>
+                            <span class="warn">Hip drop →</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- EVF -->
+            <div class="metric-card {evf_class}">
+                <div class="metric-header">
+                    <span class="metric-title">Early Vertical Forearm</span>
+                    <span class="metric-badge {evf_class}">{evf_label}</span>
+                </div>
+                <div class="metric-content">
+                    <div class="silhouette-container">{get_evf_silhouette(evf)}</div>
+                    <div class="metric-details">
+                        <div class="metric-value {evf_class}">{evf:.1f}<span class="metric-unit">°</span></div>
+                        <div class="range-bar">
+                            <div class="range-zone ok-zone" style="left: 0%; width: 66%;"></div>
+                            <div class="range-zone good-zone" style="left: 0%; width: 42%;"></div>
+                            <div class="range-indicator" style="left: {min(100, evf / 60 * 100):.1f}%; background: {evf_color};"></div>
+                        </div>
+                        <div class="range-labels">
+                            <span>Vertical</span>
+                            <span class="warn">Dropped elbow →</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Body Roll -->
+            <div class="metric-card {roll_class}">
+                <div class="metric-header">
+                    <span class="metric-title">Body Roll</span>
+                    <span class="metric-badge {roll_class}">{roll_label}</span>
+                </div>
+                <div class="metric-content">
+                    <div class="silhouette-container">{get_roll_silhouette(roll)}</div>
+                    <div class="metric-details">
+                        <div class="metric-value {roll_class}">{roll:.1f}<span class="metric-unit">°</span></div>
+                        <div class="range-bar">
+                            <div class="range-zone ok-zone" style="left: 31%; width: 50%;"></div>
+                            <div class="range-zone good-zone" style="left: 44%; width: 25%;"></div>
+                            <div class="range-indicator" style="left: {min(100, roll / 80 * 100):.1f}%; background: {roll_color};"></div>
+                        </div>
+                        <div class="range-labels">
+                            <span class="warn">← Too flat</span>
+                            <span class="warn">Over-rotation →</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Kick -->
+            <div class="metric-card {kick_class}">
+                <div class="metric-header">
+                    <span class="metric-title">Kick Depth</span>
+                    <span class="metric-badge {kick_class}">{kick_label}</span>
+                </div>
+                <div class="metric-content">
+                    <div class="silhouette-container">{get_kick_silhouette(kick_d, kick_s)}</div>
+                    <div class="metric-details">
+                        <div class="metric-value {kick_class}">{kick_d:.2f}</div>
+                        <div style="font-size: 11px; color: #64748b; margin-bottom: 8px;">Symmetry: {kick_s:.1f}°</div>
+                        <div class="range-bar">
+                            <div class="range-zone ok-zone" style="left: 17%; width: 58%;"></div>
+                            <div class="range-zone good-zone" style="left: 25%; width: 33%;"></div>
+                            <div class="range-indicator" style="left: {min(100, kick_d / 0.6 * 100):.1f}%; background: {kick_color};"></div>
+                        </div>
+                        <div class="range-labels">
+                            <span class="warn">← Shallow</span>
+                            <span class="warn">Too deep →</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    return html
+
+def render_swim_metrics_component(metrics: dict, height: int = 420):
+    """Render swim metrics visualization in Streamlit"""
+    html = get_swim_metrics_html(metrics)
+    components.html(html, height=height, scrolling=False)
 
 # ─────────────────────────────────────────────
 # CONSTANTS & DEFAULTS - Updated thresholds
@@ -1366,6 +1784,17 @@ def main():
                 pass
 
             st.success("✅ Analysis complete!")
+
+            # NEW: Render visual metrics component with body silhouettes
+            st.subheader("📊 Technique Breakdown")
+            metrics_for_viz = {
+                'horizontal_deviation': summary.avg_horizontal_deviation,
+                'evf_angle': summary.avg_evf_angle,
+                'body_roll': summary.avg_body_roll,
+                'kick_depth': summary.avg_kick_depth,
+                'kick_symmetry': summary.avg_kick_symmetry,
+            }
+            render_swim_metrics_component(metrics_for_viz, height=440)
 
             # Display score cards in columns
             col1, col2, col3 = st.columns(3)
