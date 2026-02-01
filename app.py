@@ -257,6 +257,9 @@ class SwimAnalyzer:
         self.torso_buffer = deque(maxlen=7)
         self.forearm_buffer = deque(maxlen=7)
         self.kick_depth_buffer = deque(maxlen=7)
+        
+        # Track last timestamp to ensure monotonic increase
+        self.last_timestamp_ms = -1
 
     def _init_landmarker(self):
         if not MEDIAPIPE_TASKS_AVAILABLE:
@@ -283,20 +286,27 @@ class SwimAnalyzer:
         )
         return vision.PoseLandmarker.create_from_options(options)
 
-    def process(self, frame, t):
+    def process(self, frame, t, timestamp_ms):
+        """
+        Process a frame with pose detection.
+        
+        Args:
+            frame: BGR image frame
+            t: Real time in seconds (for metrics/stroke timing)
+            timestamp_ms: Monotonically increasing timestamp in milliseconds for MediaPipe
+        """
         if self.landmarker is None:
             return frame, None
+
+        # Ensure timestamp is strictly increasing
+        if timestamp_ms <= self.last_timestamp_ms:
+            timestamp_ms = self.last_timestamp_ms + 1
+        self.last_timestamp_ms = timestamp_ms
 
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
-        # This line is NOT used for MediaPipe timestamp anymore
-        # t is only for your internal metrics (stroke/breath timing)
-
-        # Use frame_idx * step for MediaPipe (strictly increasing)
-        # This value is passed in the main loop, not here
-
-        result = self.landmarker.detect_for_video(mp_image, 0)  # placeholder – real timestamp set in loop
+        result = self.landmarker.detect_for_video(mp_image, timestamp_ms)
 
         if not result.pose_landmarks:
             return frame, None
@@ -331,7 +341,11 @@ class SwimAnalyzer:
                 frame = cv2.flip(frame, -1)
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-                result = self.landmarker.detect_for_video(mp_image, 0)  # placeholder
+                
+                # Use a new incremented timestamp for the flipped frame detection
+                self.last_timestamp_ms += 1
+                result = self.landmarker.detect_for_video(mp_image, self.last_timestamp_ms)
+                
                 if not result.pose_landmarks:
                     return frame, None
                 landmarks = result.pose_landmarks[0]
@@ -687,13 +701,15 @@ def main():
                 ret, frame = cap.read()
                 if not ret: break
 
-                # ───── FIXED: monotonic timestamp for MediaPipe ─────
-                timestamp_ms = frame_idx * 10  # 10 ms step = safe & always increasing
+                # Monotonically increasing timestamp for MediaPipe (in milliseconds)
+                # Using frame_idx * 33 gives roughly 30fps equivalent spacing
+                # The key is that it's STRICTLY INCREASING
+                timestamp_ms = frame_idx * 33 + 1  # +1 ensures we never start at 0 for first frame
 
                 # Real time for your metrics (stroke/breath timing)
                 real_t = frame_idx / fps
 
-                annotated, _ = analyzer.process(frame, real_t)
+                annotated, _ = analyzer.process(frame, real_t, timestamp_ms)
                 writer.write(annotated)
 
                 frame_idx += 1
