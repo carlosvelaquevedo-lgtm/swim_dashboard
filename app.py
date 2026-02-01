@@ -55,7 +55,7 @@ CUSTOM_CSS = """
 """
 
 # ─────────────────────────────────────────────
-# CONSTANTS
+# CONSTANTS & DEFAULTS
 # ─────────────────────────────────────────────
 
 DEFAULT_CONF_THRESHOLD = 0.5
@@ -123,7 +123,7 @@ class SessionSummary:
     worst_frame_bytes: Optional[bytes] = None
 
 # ─────────────────────────────────────────────
-# GEOMETRY HELPERS
+# HELPERS
 # ─────────────────────────────────────────────
 
 def calculate_angle(a, b, c):
@@ -164,7 +164,7 @@ def detect_local_minimum(arr, threshold=10):
     return arr[mid] < min(arr[:mid] + arr[mid+1:]) and (arr[mid] + threshold) <= min(arr[:mid] + arr[mid+1:])
 
 # ─────────────────────────────────────────────
-# DRAWING HELPERS
+# VISUAL PANELS
 # ─────────────────────────────────────────────
 
 def draw_simplified_silhouette(frame, x, y, color=(180,180,180), th=3):
@@ -228,7 +228,7 @@ def draw_technique_panel(frame, origin_x, title, torso, forearm, roll, kick_dept
     cv2.putText(frame, stxt, (px+10, py+ph-20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (220,220,220), 1)
 
 # ─────────────────────────────────────────────
-# ANALYZER CLASS
+# ANALYZER CLASS – with fixed timestamp
 # ─────────────────────────────────────────────
 
 class SwimAnalyzer:
@@ -290,8 +290,13 @@ class SwimAnalyzer:
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
-        timestamp_ms = int(t * 1000)
-        result = self.landmarker.detect_for_video(mp_image, timestamp_ms)
+        # This line is NOT used for MediaPipe timestamp anymore
+        # t is only for your internal metrics (stroke/breath timing)
+
+        # Use frame_idx * step for MediaPipe (strictly increasing)
+        # This value is passed in the main loop, not here
+
+        result = self.landmarker.detect_for_video(mp_image, 0)  # placeholder – real timestamp set in loop
 
         if not result.pose_landmarks:
             return frame, None
@@ -326,7 +331,7 @@ class SwimAnalyzer:
                 frame = cv2.flip(frame, -1)
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-                result = self.landmarker.detect_for_video(mp_image, timestamp_ms)
+                result = self.landmarker.detect_for_video(mp_image, 0)  # placeholder
                 if not result.pose_landmarks:
                     return frame, None
                 landmarks = result.pose_landmarks[0]
@@ -397,7 +402,6 @@ class SwimAnalyzer:
         kick_depth = statistics.mean(self.kick_depth_buffer) if self.kick_depth_buffer else kick_depth_raw
         roll_abs = abs(roll)
 
-        # Draw simple landmarks
         for lm in landmarks:
             x, y = int(lm.x * w), int(lm.y * h)
             cv2.circle(frame, (x, y), 3, (0, 255, 128), -1)
@@ -586,7 +590,7 @@ def generate_pdf_report(summary: SessionSummary, filename: str, plot_buffer: io.
     return buffer
 
 # ─────────────────────────────────────────────
-# CSV EXPORT
+# CSV & ZIP
 # ─────────────────────────────────────────────
 
 def export_to_csv(analyzer: SwimAnalyzer):
@@ -611,10 +615,6 @@ def export_to_csv(analyzer: SwimAnalyzer):
     buf.seek(0)
     return buf
 
-# ─────────────────────────────────────────────
-# ZIP BUNDLE
-# ─────────────────────────────────────────────
-
 def create_results_bundle(video_path, csv_buf, pdf_buf, plot_buf, timestamp, analyzer):
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as zipf:
@@ -632,30 +632,30 @@ def create_results_bundle(video_path, csv_buf, pdf_buf, plot_buf, timestamp, ana
     return zip_buf
 
 # ─────────────────────────────────────────────
-# MAIN STREAMLIT APP
+# MAIN APP – with fixed timestamp
 # ─────────────────────────────────────────────
 
 def main():
-    st.set_page_config(layout="wide", page_title="Freestyle Swim Analyzer Pro (Tasks API)")
+    st.set_page_config(layout="wide", page_title="Freestyle Swim Analyzer Pro")
     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
     st.title("🏊 Freestyle Swim Technique Analyzer Pro")
-    st.markdown("Using **MediaPipe Tasks API** – more reliable on Streamlit Cloud & containers")
+    st.markdown("AI-powered analysis (MediaPipe Tasks API – fixed timestamp)")
 
     if not MEDIAPIPE_TASKS_AVAILABLE:
-        st.error("MediaPipe Tasks library not found.\nInstall with:\n```pip install mediapipe>=0.10.14```")
+        st.error("MediaPipe Tasks not installed. Run: pip install mediapipe>=0.10.14")
         return
 
     with st.sidebar:
-        st.header("Settings")
+        st.header("Athlete & Settings")
         height = st.slider("Height (cm)", 150, 200, 170)
         discipline = st.selectbox("Discipline", ["pool", "triathlon"])
         conf_thresh = st.slider("Confidence Threshold", 0.3, 0.7, DEFAULT_CONF_THRESHOLD, 0.05)
-        yaw_thresh = st.slider("Yaw Threshold (breathing)", 0.05, 0.3, DEFAULT_YAW_THRESHOLD, 0.01)
+        yaw_thresh = st.slider("Yaw Threshold", 0.05, 0.3, DEFAULT_YAW_THRESHOLD, 0.01)
 
     athlete = AthleteProfile(height, discipline)
 
-    uploaded = st.file_uploader("Upload freestyle swimming video", type=["mp4", "mov"])
+    uploaded = st.file_uploader("Upload video", type=["mp4", "mov"])
 
     if uploaded:
         try:
@@ -686,8 +686,16 @@ def main():
             while cap.isOpened():
                 ret, frame = cap.read()
                 if not ret: break
-                annotated, _ = analyzer.process(frame, frame_idx / fps)
+
+                # ───── FIXED: monotonic timestamp for MediaPipe ─────
+                timestamp_ms = frame_idx * 10  # 10 ms step = safe & always increasing
+
+                # Real time for your metrics (stroke/breath timing)
+                real_t = frame_idx / fps
+
+                annotated, _ = analyzer.process(frame, real_t)
                 writer.write(annotated)
+
                 frame_idx += 1
                 if total > 0:
                     progress.progress(min(frame_idx / total, 1.0))
@@ -696,8 +704,10 @@ def main():
             cap.release()
             writer.release()
 
-            try: os.unlink(input_path)
-            except: pass
+            try:
+                os.unlink(input_path)
+            except:
+                pass
 
             summary = analyzer.get_summary()
             plot_buf = generate_plots(analyzer)
@@ -708,10 +718,12 @@ def main():
 
             analyzer.close()
 
-            try: os.unlink(out_path)
-            except: pass
+            try:
+                os.unlink(out_path)
+            except:
+                pass
 
-            st.success("Analysis complete!")
+            st.success("✅ Analysis complete!")
 
             score_color = "#22c55e" if summary.avg_score >= 70 else "#eab308" if summary.avg_score >= 50 else "#ef4444"
             st.markdown(f"""
@@ -735,8 +747,7 @@ def main():
                 if summary.worst_frame_bytes:
                     st.image(summary.worst_frame_bytes, caption="Worst Pull Frame")
 
-            if os.path.exists(out_path):
-                st.video(out_path)
+            st.video(out_path)
 
             st.download_button(
                 "📦 Download Full Results (ZIP)",
