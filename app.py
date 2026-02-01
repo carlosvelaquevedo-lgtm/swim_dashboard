@@ -36,26 +36,36 @@ except ImportError:
     st.error("MediaPipe Tasks not installed → pip install mediapipe>=0.10.0")
 
 # ─────────────────────────────────────────────
-# CUSTOM CSS
+# CUSTOM CSS - Enhanced for new UI
 # ─────────────────────────────────────────────
 
 CUSTOM_CSS = """
 <style>
     .stApp { background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 50%, #0f172a 100%); }
     .metric-card { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); border-radius: 16px; padding: 20px; border: 1px solid rgba(100, 116, 139, 0.3); margin-bottom: 16px; }
-    .metric-card-green { border-left: 4px solid #22c55e; }
-    .metric-card-red   { border-left: 4px solid #ef4444; }
-    .metric-card-yellow{ border-left: 4px solid #eab308; }
+    .metric-card-green { border-left: 4px solid #22c55e; background: rgba(34, 197, 94, 0.1); }
+    .metric-card-red   { border-left: 4px solid #ef4444; background: rgba(239, 68, 68, 0.1); }
+    .metric-card-yellow{ border-left: 4px solid #eab308; background: rgba(234, 179, 8, 0.1); }
     .score-card { background: linear-gradient(135deg, #0891b2 0%, #2563eb 100%); border-radius: 16px; padding: 24px; color: white; margin-bottom: 24px; }
+    .alignment-card { background: linear-gradient(135deg, #059669 0%, #10b981 100%); border-radius: 16px; padding: 20px; color: white; margin-bottom: 16px; }
+    .evf-card { background: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%); border-radius: 16px; padding: 20px; color: white; margin-bottom: 16px; }
+    .diagnostic-box { background: rgba(30, 41, 59, 0.8); border-radius: 12px; padding: 16px; margin: 8px 0; border-left: 3px solid #06b6d4; }
+    .diagnostic-warning { border-left-color: #f59e0b; }
+    .diagnostic-error { border-left-color: #ef4444; }
     .stButton > button { background: linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%); color: white; border: none; border-radius: 12px; padding: 12px 24px; font-weight: 600; transition: all 0.3s ease; }
     .stButton > button:hover { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(6, 182, 212, 0.3); }
     h1, h2, h3 { color: #f8fafc !important; }
     p, span, label { color: #cbd5e1; }
+    .phase-badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+    .phase-entry { background: #3b82f6; color: white; }
+    .phase-pull { background: #22c55e; color: white; }
+    .phase-push { background: #f59e0b; color: black; }
+    .phase-recovery { background: #6b7280; color: white; }
 </style>
 """
 
 # ─────────────────────────────────────────────
-# CONSTANTS & DEFAULTS
+# CONSTANTS & DEFAULTS - Updated thresholds
 # ─────────────────────────────────────────────
 
 DEFAULT_CONF_THRESHOLD = 0.5
@@ -63,17 +73,36 @@ DEFAULT_YAW_THRESHOLD = 0.15
 MIN_BREATH_GAP_S = 1.0
 MIN_BREATH_HOLD_FRAMES = 4
 
+# Alignment thresholds
+DEFAULT_HORIZONTAL_DEV_GOOD = (0, 8)   # degrees - shoulder-hip-ankle alignment
+DEFAULT_HORIZONTAL_DEV_OK = (0, 15)
+
+# Torso lean thresholds
 DEFAULT_TORSO_GOOD = (4, 12)
 DEFAULT_TORSO_OK   = (0, 18)
+
+# EVF thresholds - now based on plane angle
+DEFAULT_EVF_ANGLE_GOOD = (0, 25)   # degrees from vertical plane
+DEFAULT_EVF_ANGLE_OK = (0, 40)
+
+# Legacy forearm thresholds (for display compatibility)
 DEFAULT_FOREARM_GOOD = (0, 35)
 DEFAULT_FOREARM_OK   = (0, 60)
+
+# Roll thresholds
 DEFAULT_ROLL_GOOD = (35, 55)
 DEFAULT_ROLL_OK   = (25, 65)
+
+# Kick thresholds - now relative to hip-ankle span
 DEFAULT_KICK_SYM_MAX_GOOD = 15
-DEFAULT_KICK_DEPTH_GOOD = (0.25, 0.6)
+DEFAULT_KICK_DEPTH_GOOD = (0.15, 0.35)  # Relative to hip-ankle span
+DEFAULT_KICK_DEPTH_OK = (0.10, 0.45)
+
+# Breathing penalty during pull
+BREATH_PULL_PENALTY = 15  # Points deducted for breathing during pull phase
 
 # ─────────────────────────────────────────────
-# DATA MODELS
+# DATA MODELS - Enhanced
 # ─────────────────────────────────────────────
 
 class SwimPhase(Enum):
@@ -94,7 +123,7 @@ class FrameMetrics:
     knee_left: float
     knee_right: float
     kick_symmetry: float
-    kick_depth_proxy: float
+    kick_depth_proxy: float  # Now relative to hip-ankle span
     symmetry_hips: float
     score: float
     body_roll: float
@@ -103,6 +132,13 @@ class FrameMetrics:
     phase: str
     breath_state: str
     confidence: float = 1.0
+    # New metrics
+    horizontal_deviation: float = 0.0  # Shoulder-hip-ankle alignment
+    evf_plane_angle: float = 0.0       # EVF via plane calculation
+    wrist_velocity_y: float = 0.0      # For phase detection
+    alignment_score: float = 100.0     # Sub-score for alignment
+    evf_score: float = 100.0           # Sub-score for EVF
+    breathing_during_pull: bool = False
 
 @dataclass
 class SessionSummary:
@@ -121,18 +157,28 @@ class SessionSummary:
     avg_confidence: float
     best_frame_bytes: Optional[bytes] = None
     worst_frame_bytes: Optional[bytes] = None
+    # New summary metrics
+    avg_horizontal_deviation: float = 0.0
+    avg_evf_angle: float = 0.0
+    avg_alignment_score: float = 100.0
+    avg_evf_score: float = 100.0
+    breaths_during_pull: int = 0
+    total_breaths: int = 0
+    diagnostics: List[str] = field(default_factory=list)
 
 # ─────────────────────────────────────────────
-# HELPERS
+# HELPERS - Enhanced calculations
 # ─────────────────────────────────────────────
 
 def calculate_angle(a, b, c):
+    """Calculate angle at point b given points a, b, c"""
     ba = np.array(a) - np.array(b)
     bc = np.array(c) - np.array(b)
     cosang = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc) + 1e-8)
     return np.degrees(np.arccos(np.clip(cosang, -1, 1)))
 
 def compute_torso_lean(lm_pixel: Dict):
+    """Compute torso lean angle from vertical"""
     mid_s = ((lm_pixel["left_shoulder"][0] + lm_pixel["right_shoulder"][0]) / 2,
              (lm_pixel["left_shoulder"][1] + lm_pixel["right_shoulder"][1]) / 2)
     mid_h = ((lm_pixel["left_hip"][0] + lm_pixel["right_hip"][0]) / 2,
@@ -142,32 +188,185 @@ def compute_torso_lean(lm_pixel: Dict):
     return math.degrees(math.atan2(dy, dx))
 
 def compute_forearm_vertical(lm_pixel: Dict):
+    """Legacy forearm vertical calculation for display"""
     dx = lm_pixel["left_wrist"][0] - lm_pixel["left_elbow"][0]
     dy = lm_pixel["left_wrist"][1] - lm_pixel["left_elbow"][1]
     return abs(math.degrees(math.atan2(dx, -dy)))
 
-def compute_kick_depth_proxy(lm_pixel: Dict):
+def compute_horizontal_deviation(lm_pixel: Dict):
+    """
+    NEW: Calculate horizontal body alignment (shoulder-hip-ankle line)
+    Measures lateral deviation from a straight body line
+    """
+    # Get midpoints
+    mid_shoulder = np.array([
+        (lm_pixel["left_shoulder"][0] + lm_pixel["right_shoulder"][0]) / 2,
+        (lm_pixel["left_shoulder"][1] + lm_pixel["right_shoulder"][1]) / 2
+    ])
+    mid_hip = np.array([
+        (lm_pixel["left_hip"][0] + lm_pixel["right_hip"][0]) / 2,
+        (lm_pixel["left_hip"][1] + lm_pixel["right_hip"][1]) / 2
+    ])
+    mid_ankle = np.array([
+        (lm_pixel["left_ankle"][0] + lm_pixel["right_ankle"][0]) / 2,
+        (lm_pixel["left_ankle"][1] + lm_pixel["right_ankle"][1]) / 2
+    ])
+    
+    # Calculate angle deviation from straight line
+    # Vector from shoulder to ankle (ideal body line)
+    ideal_line = mid_ankle - mid_shoulder
+    # Vector from shoulder to hip
+    to_hip = mid_hip - mid_shoulder
+    
+    # Project hip onto ideal line
+    ideal_len = np.linalg.norm(ideal_line)
+    if ideal_len < 1:
+        return 0.0
+    
+    ideal_unit = ideal_line / ideal_len
+    proj_len = np.dot(to_hip, ideal_unit)
+    proj_point = mid_shoulder + proj_len * ideal_unit
+    
+    # Lateral deviation
+    deviation = np.linalg.norm(mid_hip - proj_point)
+    
+    # Convert to angle (approximate)
+    deviation_angle = math.degrees(math.atan2(deviation, ideal_len / 2))
+    
+    return abs(deviation_angle)
+
+def compute_evf_plane_angle(lm_pixel: Dict):
+    """
+    NEW: Calculate Early Vertical Forearm angle via shoulder-elbow-wrist plane
+    Measures how vertical the forearm is relative to the direction of travel
+    """
+    # Use the arm that's more likely in the pull phase (lower wrist)
+    left_wrist_y = lm_pixel["left_wrist"][1]
+    right_wrist_y = lm_pixel["right_wrist"][1]
+    
+    if left_wrist_y > right_wrist_y:
+        shoulder = np.array(lm_pixel["left_shoulder"])
+        elbow = np.array(lm_pixel["left_elbow"])
+        wrist = np.array(lm_pixel["left_wrist"])
+    else:
+        shoulder = np.array(lm_pixel["right_shoulder"])
+        elbow = np.array(lm_pixel["right_elbow"])
+        wrist = np.array(lm_pixel["right_wrist"])
+    
+    # Vector from elbow to wrist (forearm)
+    forearm = wrist - elbow
+    
+    # Vector from shoulder to elbow (upper arm)
+    upper_arm = elbow - shoulder
+    
+    # Ideal EVF: forearm should be vertical (pointing down in image coords)
+    # We measure angle from vertical
+    vertical = np.array([0, 1])  # Down in image coordinates
+    
+    # Project forearm onto 2D and measure angle from vertical
+    forearm_2d = forearm[:2] if len(forearm) > 2 else forearm
+    forearm_len = np.linalg.norm(forearm_2d)
+    
+    if forearm_len < 1:
+        return 0.0
+    
+    cos_angle = np.dot(forearm_2d, vertical) / forearm_len
+    angle = math.degrees(math.acos(np.clip(cos_angle, -1, 1)))
+    
+    return angle
+
+def compute_kick_depth_relative(lm_pixel: Dict):
+    """
+    NEW: Calculate kick depth relative to hip-ankle span
+    This normalizes for body size and camera angle
+    """
+    # Hip-ankle span (body length reference)
     hip_y = (lm_pixel["left_hip"][1] + lm_pixel["right_hip"][1]) / 2
+    ankle_y = (lm_pixel["left_ankle"][1] + lm_pixel["right_ankle"][1]) / 2
+    hip_ankle_span = abs(ankle_y - hip_y)
+    
+    if hip_ankle_span < 10:  # Avoid division by zero
+        return 0.0
+    
+    # Knee deviation from hip-ankle line
     knee_l_y = lm_pixel["left_knee"][1]
     knee_r_y = lm_pixel["right_knee"][1]
-    sh_dist = abs(lm_pixel["left_shoulder"][1] - lm_pixel["left_hip"][1]) or 1.0
-    return ((abs(knee_l_y - hip_y) + abs(knee_r_y - hip_y)) / 2) / sh_dist
+    
+    # Expected knee position if legs were straight (midpoint of hip-ankle)
+    expected_knee_y = (hip_y + ankle_y) / 2
+    
+    # Kick depth is the deviation of knees from this expected position
+    left_dev = abs(knee_l_y - expected_knee_y)
+    right_dev = abs(knee_r_y - expected_knee_y)
+    
+    # Average deviation normalized by hip-ankle span
+    kick_depth = (left_dev + right_dev) / (2 * hip_ankle_span)
+    
+    return kick_depth
+
+def detect_phase_enhanced(lm_pixel: Dict, elbow_angle: float, prev_wrist_y: Optional[float], fps: float):
+    """
+    NEW: Enhanced phase detection using elbow angle + wrist vertical velocity
+    """
+    wrist_y = min(lm_pixel["left_wrist"][1], lm_pixel["right_wrist"][1])
+    shoulder_y = min(lm_pixel["left_shoulder"][1], lm_pixel["right_shoulder"][1])
+    
+    # Calculate wrist velocity if we have previous position
+    wrist_velocity_y = 0.0
+    if prev_wrist_y is not None:
+        wrist_velocity_y = (wrist_y - prev_wrist_y) * fps  # pixels per second
+    
+    underwater = wrist_y > shoulder_y + 20
+    
+    # Phase detection logic
+    if not underwater:
+        phase = "Recovery"
+    elif elbow_angle > 140:
+        phase = "Entry"
+    elif elbow_angle > 90:
+        # Distinguish Pull from Push using wrist velocity
+        if wrist_velocity_y > 50:  # Wrist moving down = Pull
+            phase = "Pull"
+        else:
+            phase = "Pull"  # Default to Pull in this elbow range
+    else:
+        # Low elbow angle
+        if wrist_velocity_y < -30:  # Wrist moving up = Push exit
+            phase = "Push"
+        else:
+            phase = "Push"
+    
+    return phase, wrist_velocity_y, wrist_y
 
 def get_zone_color(val, good, ok):
-    if good[0] <= val <= good[1]: return (0, 180, 0)
-    if ok[0] <= val <= ok[1]: return (0, 220, 220)
-    return (220, 0, 0)
+    """Return color based on value zone"""
+    if good[0] <= val <= good[1]: 
+        return (0, 180, 0)  # Green
+    if ok[0] <= val <= ok[1]: 
+        return (0, 220, 220)  # Yellow/Amber
+    return (220, 0, 0)  # Red
+
+def get_zone_status(val, good, ok):
+    """Return status string based on value zone"""
+    if good[0] <= val <= good[1]: 
+        return "Good"
+    if ok[0] <= val <= ok[1]: 
+        return "OK"
+    return "Needs Work"
 
 def detect_local_minimum(arr, threshold=10):
-    if len(arr) < 3: return False
+    """Detect stroke based on elbow angle local minimum"""
+    if len(arr) < 3: 
+        return False
     mid = len(arr) // 2
     return arr[mid] < min(arr[:mid] + arr[mid+1:]) and (arr[mid] + threshold) <= min(arr[:mid] + arr[mid+1:])
 
 # ─────────────────────────────────────────────
-# VISUAL PANELS
+# VISUAL PANELS - Enhanced
 # ─────────────────────────────────────────────
 
 def draw_simplified_silhouette(frame, x, y, color=(180,180,180), th=3):
+    """Draw a simple stick figure silhouette"""
     cv2.circle(frame, (x, y-50), 18, color, th)
     cv2.line(frame, (x, y-32), (x, y+70), color, th+2)
     cv2.line(frame, (x, y-10), (x-45, y+30), color, th)
@@ -175,60 +374,173 @@ def draw_simplified_silhouette(frame, x, y, color=(180,180,180), th=3):
     cv2.line(frame, (x, y+70), (x-35, y+130), color, th)
     cv2.line(frame, (x, y+70), (x+35, y+130), color, th)
 
-def draw_technique_panel(frame, origin_x, title, torso, forearm, roll, kick_depth, phase, is_ideal=False, breath_side='N'):
+def draw_technique_panel_enhanced(frame, origin_x, title, metrics_dict, phase, is_ideal=False, breath_side='N'):
+    """
+    Enhanced technique panel with separate alignment and EVF indicators
+    """
     h, w = frame.shape[:2]
-    px, py = origin_x - 140, 30
-    pw, ph = 280, 440
+    px, py = origin_x - 160, 30
+    pw, ph = 320, 480
+    
+    # Semi-transparent background
     ov = frame.copy()
     cv2.rectangle(ov, (px, py), (px+pw, py+ph), (0,0,0), -1)
     cv2.addWeighted(ov, 0.65, frame, 0.35, 0, frame)
 
-    cv2.putText(frame, title.upper(), (px+10, py+30), cv2.FONT_HERSHEY_SIMPLEX, 0.9,
+    # Title
+    cv2.putText(frame, title.upper(), (px+10, py+30), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
                 (255,255,255) if not is_ideal else (200,200,255), 2)
 
-    draw_simplified_silhouette(frame, px+140, py+200, (160,160,160) if is_ideal else (200,200,200), 2)
+    # Silhouette
+    draw_simplified_silhouette(frame, px+160, py+200, (160,160,160) if is_ideal else (200,200,200), 2)
 
+    y_offset = py + 55
+    
+    # 1. Horizontal Alignment Score
+    h_dev = metrics_dict.get('horizontal_deviation', 0)
+    h_color = get_zone_color(h_dev, DEFAULT_HORIZONTAL_DEV_GOOD, DEFAULT_HORIZONTAL_DEV_OK)
+    cv2.putText(frame, f"Alignment: {h_dev:.1f}°", (px+10, y_offset), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, h_color, 2)
+    # Visual indicator bar
+    bar_len = int(min(h_dev / 20, 1.0) * 100)
+    cv2.rectangle(frame, (px+180, y_offset-12), (px+180+bar_len, y_offset-2), h_color, -1)
+    y_offset += 30
+
+    # 2. EVF Score (during Pull/Push phases)
+    evf_angle = metrics_dict.get('evf_plane_angle', 0)
+    if phase in ("Pull", "Push"):
+        evf_color = get_zone_color(evf_angle, DEFAULT_EVF_ANGLE_GOOD, DEFAULT_EVF_ANGLE_OK)
+        cv2.putText(frame, f"EVF Angle: {evf_angle:.1f}°", (px+10, y_offset), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, evf_color, 2)
+        bar_len = int(min(evf_angle / 60, 1.0) * 100)
+        cv2.rectangle(frame, (px+180, y_offset-12), (px+180+bar_len, y_offset-2), evf_color, -1)
+    else:
+        cv2.putText(frame, "EVF: n/a (Recovery)", (px+10, y_offset), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (128, 128, 128), 2)
+    y_offset += 30
+
+    # 3. Torso Lean
+    torso = metrics_dict.get('torso_lean', 8)
     tc = get_zone_color(abs(torso), DEFAULT_TORSO_GOOD, DEFAULT_TORSO_OK)
-    tlen = 80
+    cv2.putText(frame, f"Torso Lean: {torso:.1f}°", (px+10, y_offset), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, tc, 2)
+    # Visual torso line
+    tlen = 60
     tdx = tlen * math.sin(math.radians(torso))
     tdy = tlen * math.cos(math.radians(torso))
-    cv2.line(frame, (px+140, py+100), (int(px+140+tdx), int(py+100+tdy)), tc, 6)
-    cv2.putText(frame, f"Torso Lean: {torso:.1f}°", (px+10, py+70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, tc, 2)
+    cv2.line(frame, (px+250, y_offset+20), (int(px+250+tdx), int(py+y_offset+20+tdy)), tc, 4)
+    y_offset += 35
 
-    if phase in ("Pull", "Push"):
-        fc = get_zone_color(forearm, DEFAULT_FOREARM_GOOD, DEFAULT_FOREARM_OK)
-        ftxt = f"Forearm to Vert: {forearm:.1f}°"
-    else:
-        fc = (180,180,180)
-        ftxt = "Forearm n/a"
-    cdx = 80 * math.sin(math.radians(forearm))
-    cdy = 80 * math.cos(math.radians(forearm))
-    cv2.line(frame, (px+220, py+100), (int(px+220+cdx), int(py+100+cdy)), fc, 6)
-    cv2.putText(frame, ftxt, (px+10, py+110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, fc, 2)
-
+    # 4. Body Roll
+    roll = metrics_dict.get('body_roll', 45)
     rc = get_zone_color(roll, DEFAULT_ROLL_GOOD, DEFAULT_ROLL_OK)
-    cv2.putText(frame, f"Body Rot: {roll:.1f}°", (px+10, py+150), cv2.FONT_HERSHEY_SIMPLEX, 0.7, rc, 2)
-    rdx = 60 * math.cos(math.radians(roll))
-    rdy = 60 * math.sin(math.radians(roll))
-    cv2.line(frame, (px+140, py+260), (int(px+140+rdx), int(py+260+rdy)), rc, 5)
+    cv2.putText(frame, f"Body Roll: {roll:.1f}°", (px+10, y_offset), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, rc, 2)
+    # Visual roll indicator
+    rdx = 50 * math.cos(math.radians(roll))
+    rdy = 50 * math.sin(math.radians(roll))
+    cv2.line(frame, (px+250, y_offset+10), (int(px+250+rdx), int(y_offset+10+rdy)), rc, 4)
+    y_offset += 35
 
-    kdc = get_zone_color(kick_depth * 100, DEFAULT_KICK_DEPTH_GOOD, (0.1, 0.8))
-    cv2.putText(frame, f"Kick Depth: {kick_depth:.2f}", (px+10, py+190), cv2.FONT_HERSHEY_SIMPLEX, 0.7, kdc, 2)
-    kdx = 60 * min(kick_depth / 1.0, 1.0)
-    cv2.line(frame, (px+140, py+320), (int(px+140+kdx), py+320), kdc, 5)
+    # 5. Kick Depth (relative to hip-ankle span)
+    kick_depth = metrics_dict.get('kick_depth', 0.25)
+    kdc = get_zone_color(kick_depth, DEFAULT_KICK_DEPTH_GOOD, DEFAULT_KICK_DEPTH_OK)
+    cv2.putText(frame, f"Kick Depth: {kick_depth:.2f}", (px+10, y_offset), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, kdc, 2)
+    # Visual bar
+    bar_len = int(min(kick_depth / 0.5, 1.0) * 100)
+    cv2.rectangle(frame, (px+180, y_offset-12), (px+180+bar_len, y_offset-2), kdc, -1)
+    y_offset += 35
 
+    # 6. Kick Symmetry
+    kick_sym = metrics_dict.get('kick_symmetry', 0)
+    ksc = get_zone_color(kick_sym, (0, DEFAULT_KICK_SYM_MAX_GOOD), (0, 25))
+    cv2.putText(frame, f"Kick Sym: {kick_sym:.1f}°", (px+10, y_offset), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, ksc, 2)
+    y_offset += 35
+
+    # 7. Phase indicator with color coding
+    phase_colors = {
+        "Entry": (59, 130, 246),    # Blue
+        "Pull": (34, 197, 94),      # Green
+        "Push": (245, 158, 11),     # Amber
+        "Recovery": (107, 114, 128) # Gray
+    }
+    phase_color = phase_colors.get(phase, (200, 200, 200))
+    cv2.putText(frame, f"Phase: {phase}", (px+10, y_offset), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, phase_color, 2)
+    y_offset += 35
+
+    # 8. Breathing indicator with warning if during pull
+    breathing_during_pull = metrics_dict.get('breathing_during_pull', False)
     if breath_side != 'N':
-        bcolor = (255,165,0) if breath_side == 'L' else (0,191,255)
-        btxt = f"Breath: {'Left' if breath_side == 'L' else 'Right'}"
-        cv2.putText(frame, btxt, (px+10, py+350), cv2.FONT_HERSHEY_SIMPLEX, 0.7, bcolor, 2)
+        if breathing_during_pull:
+            bcolor = (0, 0, 255)  # Red warning
+            btxt = f"⚠ BREATH DURING PULL ({breath_side})"
+        else:
+            bcolor = (255,165,0) if breath_side == 'L' else (0,191,255)
+            btxt = f"Breath: {'Left' if breath_side == 'L' else 'Right'}"
+        cv2.putText(frame, btxt, (px+10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.55, bcolor, 2)
     else:
-        cv2.putText(frame, "Breath: Neutral", (px+10, py+350), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (180,180,180), 2)
+        cv2.putText(frame, "Breath: Neutral", (px+10, y_offset), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180,180,180), 2)
+    y_offset += 35
 
+    # Overall score at bottom
+    score = metrics_dict.get('score', 0)
+    score_color = (0, 255, 0) if score >= 70 else (0, 220, 220) if score >= 50 else (0, 0, 255)
+    cv2.putText(frame, f"Score: {score:.0f}/100", (px+10, y_offset), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, score_color, 2)
+
+    # Footer
     stxt = "IDEAL REFERENCE" if is_ideal else "YOUR STROKE"
-    cv2.putText(frame, stxt, (px+10, py+ph-20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (220,220,220), 1)
+    cv2.putText(frame, stxt, (px+10, py+ph-15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180,180,180), 1)
+
+def draw_overlay_zones(frame, lm_pixel, horizontal_dev, evf_angle, phase):
+    """
+    Draw color-coded overlay zones on the swimmer
+    Green = Good, Amber = OK, Red = Needs Work
+    """
+    h, w = frame.shape[:2]
+    
+    # Draw alignment line (shoulder-hip-ankle)
+    mid_shoulder = (
+        int((lm_pixel["left_shoulder"][0] + lm_pixel["right_shoulder"][0]) / 2),
+        int((lm_pixel["left_shoulder"][1] + lm_pixel["right_shoulder"][1]) / 2)
+    )
+    mid_hip = (
+        int((lm_pixel["left_hip"][0] + lm_pixel["right_hip"][0]) / 2),
+        int((lm_pixel["left_hip"][1] + lm_pixel["right_hip"][1]) / 2)
+    )
+    mid_ankle = (
+        int((lm_pixel["left_ankle"][0] + lm_pixel["right_ankle"][0]) / 2),
+        int((lm_pixel["left_ankle"][1] + lm_pixel["right_ankle"][1]) / 2)
+    )
+    
+    # Color based on alignment
+    align_color = get_zone_color(horizontal_dev, DEFAULT_HORIZONTAL_DEV_GOOD, DEFAULT_HORIZONTAL_DEV_OK)
+    # Draw body line
+    cv2.line(frame, mid_shoulder, mid_hip, align_color, 3)
+    cv2.line(frame, mid_hip, mid_ankle, align_color, 3)
+    
+    # Draw EVF indicator during pull/push
+    if phase in ("Pull", "Push"):
+        # Find the pulling arm (lower wrist)
+        if lm_pixel["left_wrist"][1] > lm_pixel["right_wrist"][1]:
+            elbow = (int(lm_pixel["left_elbow"][0]), int(lm_pixel["left_elbow"][1]))
+            wrist = (int(lm_pixel["left_wrist"][0]), int(lm_pixel["left_wrist"][1]))
+        else:
+            elbow = (int(lm_pixel["right_elbow"][0]), int(lm_pixel["right_elbow"][1]))
+            wrist = (int(lm_pixel["right_wrist"][0]), int(lm_pixel["right_wrist"][1]))
+        
+        evf_color = get_zone_color(evf_angle, DEFAULT_EVF_ANGLE_GOOD, DEFAULT_EVF_ANGLE_OK)
+        cv2.line(frame, elbow, wrist, evf_color, 4)
+        
+        # Draw ideal vertical line from elbow for reference
+        cv2.line(frame, elbow, (elbow[0], elbow[1] + 80), (100, 100, 100), 2, cv2.LINE_AA)
 
 # ─────────────────────────────────────────────
-# ANALYZER CLASS – with fixed timestamp
+# ANALYZER CLASS – Enhanced with new metrics
 # ─────────────────────────────────────────────
 
 class SwimAnalyzer:
@@ -254,12 +566,19 @@ class SwimAnalyzer:
         self.worst_dev = -float('inf')
         self.best_bytes = self.worst_bytes = None
 
+        # Smoothing buffers
         self.torso_buffer = deque(maxlen=7)
         self.forearm_buffer = deque(maxlen=7)
         self.kick_depth_buffer = deque(maxlen=7)
+        self.horizontal_dev_buffer = deque(maxlen=7)
+        self.evf_buffer = deque(maxlen=7)
         
-        # Track last timestamp to ensure monotonic increase
+        # Track last timestamp and wrist position
         self.last_timestamp_ms = -1
+        self.prev_wrist_y = None
+        
+        # Breathing during pull tracking
+        self.breaths_during_pull = 0
 
     def _init_landmarker(self):
         if not MEDIAPIPE_TASKS_AVAILABLE:
@@ -286,7 +605,7 @@ class SwimAnalyzer:
         )
         return vision.PoseLandmarker.create_from_options(options)
 
-    def process(self, frame, t, timestamp_ms):
+    def process(self, frame, t, timestamp_ms, fps=30.0):
         """
         Process a frame with pose detection.
         
@@ -294,6 +613,7 @@ class SwimAnalyzer:
             frame: BGR image frame
             t: Real time in seconds (for metrics/stroke timing)
             timestamp_ms: Monotonically increasing timestamp in milliseconds for MediaPipe
+            fps: Frames per second for velocity calculations
         """
         if self.landmarker is None:
             return frame, None
@@ -342,7 +662,6 @@ class SwimAnalyzer:
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
                 
-                # Use a new incremented timestamp for the flipped frame detection
                 self.last_timestamp_ms += 1
                 result = self.landmarker.detect_for_video(mp_image, self.last_timestamp_ms)
                 
@@ -353,6 +672,7 @@ class SwimAnalyzer:
                     lm = landmarks[idx]
                     lm_pixel[name] = (lm.x * w, lm.y * h)
 
+        # Calculate basic metrics
         elbow = min(
             calculate_angle(lm_pixel["left_shoulder"], lm_pixel["left_elbow"], lm_pixel["left_wrist"]),
             calculate_angle(lm_pixel["right_shoulder"], lm_pixel["right_elbow"], lm_pixel["right_wrist"])
@@ -366,24 +686,33 @@ class SwimAnalyzer:
         knee_l = calculate_angle(lm_pixel["left_hip"], lm_pixel["left_knee"], lm_pixel["left_ankle"])
         knee_r = calculate_angle(lm_pixel["right_hip"], lm_pixel["right_knee"], lm_pixel["right_ankle"])
         kick_sym = abs(knee_l - knee_r)
-        kick_depth_raw = compute_kick_depth_proxy(lm_pixel)
 
         symmetry_hips = abs(lm_pixel["left_hip"][0] - lm_pixel["right_hip"][0]) / w * 100
 
-        wrist_y = lm_pixel["left_wrist"][1]
-        shoulder_y = lm_pixel["left_shoulder"][1]
-        underwater = wrist_y > shoulder_y + 20
-        phase = "Recovery"
-        if underwater:
-            if elbow > 130: phase = "Entry"
-            elif elbow > 90: phase = "Pull"
-            else: phase = "Push"
+        # NEW: Enhanced phase detection with wrist velocity
+        phase, wrist_velocity_y, current_wrist_y = detect_phase_enhanced(
+            lm_pixel, elbow, self.prev_wrist_y, fps
+        )
+        self.prev_wrist_y = current_wrist_y
 
+        # NEW: Calculate horizontal deviation (body alignment)
+        horizontal_dev_raw = compute_horizontal_deviation(lm_pixel)
+        
+        # NEW: Calculate EVF plane angle
+        evf_angle_raw = compute_evf_plane_angle(lm_pixel)
+        
+        # NEW: Calculate kick depth relative to hip-ankle span
+        kick_depth_raw = compute_kick_depth_relative(lm_pixel)
+
+        # Breathing detection
         yaw = 0
         if "nose" in lm_pixel:
             mid_s = (lm_pixel["left_shoulder"][0] + lm_pixel["right_shoulder"][0]) / 2
-            yaw = (lm_pixel["nose"][0] - mid_s) / abs(lm_pixel["right_shoulder"][0] - lm_pixel["left_shoulder"][0] or 1)
+            shoulder_width = abs(lm_pixel["right_shoulder"][0] - lm_pixel["left_shoulder"][0])
+            if shoulder_width > 0:
+                yaw = (lm_pixel["nose"][0] - mid_s) / shoulder_width
 
+        breathing_during_pull = False
         if abs(yaw) > self.yaw_thresh:
             side = 'R' if yaw > 0 else 'L'
             if side == self.breath_side:
@@ -392,10 +721,18 @@ class SwimAnalyzer:
                 self.breath_persist = 1
                 self.breath_side = side
             if self.breath_persist >= MIN_BREATH_HOLD_FRAMES and t - self.last_breath >= MIN_BREATH_GAP_S:
-                if side == 'L': self.breath_l += 1
-                else: self.breath_r += 1
+                if side == 'L': 
+                    self.breath_l += 1
+                else: 
+                    self.breath_r += 1
                 self.last_breath = t
+                
+                # NEW: Check if breathing during pull phase
+                if phase == "Pull":
+                    breathing_during_pull = True
+                    self.breaths_during_pull += 1
 
+        # Stroke detection
         self.elbow_win.append(elbow)
         self.time_win.append(t)
         if len(self.elbow_win) >= 9 and detect_local_minimum(list(self.elbow_win)):
@@ -403,28 +740,129 @@ class SwimAnalyzer:
             if not self.stroke_times or ct - self.stroke_times[-1] >= 0.5:
                 self.stroke_times.append(ct)
 
+        # Calculate legacy metrics for compatibility
         torso_raw = compute_torso_lean(lm_pixel)
         forearm_raw = compute_forearm_vertical(lm_pixel)
-        kick_depth_raw = compute_kick_depth_proxy(lm_pixel)
 
+        # Smooth all metrics
         self.torso_buffer.append(torso_raw)
         self.forearm_buffer.append(forearm_raw)
         self.kick_depth_buffer.append(kick_depth_raw)
+        self.horizontal_dev_buffer.append(horizontal_dev_raw)
+        self.evf_buffer.append(evf_angle_raw)
 
         torso = statistics.mean(self.torso_buffer) if self.torso_buffer else torso_raw
         forearm = statistics.mean(self.forearm_buffer) if self.forearm_buffer else forearm_raw
         kick_depth = statistics.mean(self.kick_depth_buffer) if self.kick_depth_buffer else kick_depth_raw
+        horizontal_dev = statistics.mean(self.horizontal_dev_buffer) if self.horizontal_dev_buffer else horizontal_dev_raw
+        evf_angle = statistics.mean(self.evf_buffer) if self.evf_buffer else evf_angle_raw
         roll_abs = abs(roll)
 
+        # Draw landmarks
         for lm in landmarks:
             x, y = int(lm.x * w), int(lm.y * h)
             cv2.circle(frame, (x, y), 3, (0, 255, 128), -1)
 
-        draw_technique_panel(frame, w-200, "YOUR STROKE", torso, forearm, roll_abs, kick_depth, phase, False, self.breath_side)
-        draw_technique_panel(frame, 200, "IDEAL REFERENCE", 8.0, 20.0, 45.0, 0.4, "PULL", True, 'N')
+        # NEW: Draw color-coded overlay zones
+        draw_overlay_zones(frame, lm_pixel, horizontal_dev, evf_angle, phase)
 
+        # Calculate sub-scores
+        # Alignment score (0-100)
+        if horizontal_dev <= DEFAULT_HORIZONTAL_DEV_GOOD[1]:
+            alignment_score = 100
+        elif horizontal_dev <= DEFAULT_HORIZONTAL_DEV_OK[1]:
+            alignment_score = 100 - ((horizontal_dev - DEFAULT_HORIZONTAL_DEV_GOOD[1]) / 
+                                     (DEFAULT_HORIZONTAL_DEV_OK[1] - DEFAULT_HORIZONTAL_DEV_GOOD[1]) * 30)
+        else:
+            alignment_score = max(0, 70 - (horizontal_dev - DEFAULT_HORIZONTAL_DEV_OK[1]) * 2)
+
+        # EVF score (only during Pull/Push)
+        if phase in ("Pull", "Push"):
+            if evf_angle <= DEFAULT_EVF_ANGLE_GOOD[1]:
+                evf_score = 100
+            elif evf_angle <= DEFAULT_EVF_ANGLE_OK[1]:
+                evf_score = 100 - ((evf_angle - DEFAULT_EVF_ANGLE_GOOD[1]) / 
+                                   (DEFAULT_EVF_ANGLE_OK[1] - DEFAULT_EVF_ANGLE_GOOD[1]) * 30)
+            else:
+                evf_score = max(0, 70 - (evf_angle - DEFAULT_EVF_ANGLE_OK[1]))
+        else:
+            evf_score = 100  # Don't penalize during recovery
+
+        # Calculate overall score with new components
+        # Weight distribution: Alignment 25%, EVF 25%, Roll 15%, Kick 15%, Torso 10%, Breathing 10%
+        
+        # Roll score
+        if DEFAULT_ROLL_GOOD[0] <= roll_abs <= DEFAULT_ROLL_GOOD[1]:
+            roll_score = 100
+        elif DEFAULT_ROLL_OK[0] <= roll_abs <= DEFAULT_ROLL_OK[1]:
+            roll_score = 80
+        else:
+            roll_score = max(0, 60 - abs(roll_abs - 45))
+
+        # Kick score
+        kick_sym_score = max(0, 100 - (kick_sym / DEFAULT_KICK_SYM_MAX_GOOD * 30))
+        if DEFAULT_KICK_DEPTH_GOOD[0] <= kick_depth <= DEFAULT_KICK_DEPTH_GOOD[1]:
+            kick_depth_score = 100
+        elif DEFAULT_KICK_DEPTH_OK[0] <= kick_depth <= DEFAULT_KICK_DEPTH_OK[1]:
+            kick_depth_score = 80
+        else:
+            kick_depth_score = 60
+        kick_score = (kick_sym_score + kick_depth_score) / 2
+
+        # Torso score
+        if DEFAULT_TORSO_GOOD[0] <= abs(torso) <= DEFAULT_TORSO_GOOD[1]:
+            torso_score = 100
+        elif DEFAULT_TORSO_OK[0] <= abs(torso) <= DEFAULT_TORSO_OK[1]:
+            torso_score = 80
+        else:
+            torso_score = 60
+
+        # NEW: Breathing penalty
+        breath_penalty = BREATH_PULL_PENALTY if breathing_during_pull else 0
+
+        # Weighted overall score
+        score = (
+            alignment_score * 0.25 +
+            evf_score * 0.25 +
+            roll_score * 0.15 +
+            kick_score * 0.15 +
+            torso_score * 0.10 +
+            100 * 0.10  # Base breathing score
+        ) - breath_penalty
+
+        score = max(0, min(100, score))
+
+        # Prepare metrics dict for panel
+        metrics_dict = {
+            'horizontal_deviation': horizontal_dev,
+            'evf_plane_angle': evf_angle,
+            'torso_lean': torso,
+            'body_roll': roll_abs,
+            'kick_depth': kick_depth,
+            'kick_symmetry': kick_sym,
+            'breathing_during_pull': breathing_during_pull,
+            'score': score
+        }
+
+        # Draw enhanced technique panels
+        draw_technique_panel_enhanced(frame, w-180, "YOUR STROKE", metrics_dict, phase, False, self.breath_side)
+        
+        # Ideal reference values
+        ideal_metrics = {
+            'horizontal_deviation': 3.0,
+            'evf_plane_angle': 15.0,
+            'torso_lean': 8.0,
+            'body_roll': 45.0,
+            'kick_depth': 0.25,
+            'kick_symmetry': 5.0,
+            'breathing_during_pull': False,
+            'score': 95
+        }
+        draw_technique_panel_enhanced(frame, 180, "IDEAL REFERENCE", ideal_metrics, "Pull", True, 'N')
+
+        # Track best/worst frames during Pull phase
         if phase == "Pull":
-            dev = abs(elbow - 110)
+            dev = abs(elbow - 110) + horizontal_dev + evf_angle * 0.5
             if dev < self.best_dev:
                 self.best_dev = dev
                 _, buf = cv2.imencode('.jpg', frame)
@@ -434,17 +872,28 @@ class SwimAnalyzer:
                 _, buf = cv2.imencode('.jpg', frame)
                 self.worst_bytes = buf.tobytes()
 
-        torso_dev = max(0, min(abs(torso - 8), 20)) / 20 * 30
-        forearm_dev = max(0, min(forearm - 35, 65 - forearm)) / 65 * 25
-        roll_dev = max(0, min(abs(roll_abs - 45), 20)) / 20 * 20
-        kick_sym_dev = max(0, kick_sym / DEFAULT_KICK_SYM_MAX_GOOD) * 15
-        kick_depth_dev = 0 if DEFAULT_KICK_DEPTH_GOOD[0] <= kick_depth <= DEFAULT_KICK_DEPTH_GOOD[1] else 10
-        score = max(0, 100 - (torso_dev + forearm_dev + roll_dev + kick_sym_dev + kick_depth_dev))
-
+        # Store metrics
         metrics = FrameMetrics(
-            t, elbow, knee_l, knee_r, kick_sym, kick_depth,
-            symmetry_hips, score, roll_abs, torso, forearm, phase,
-            self.breath_side if self.breath_side != 'N' else "-", conf
+            time_s=t,
+            elbow_angle=elbow,
+            knee_left=knee_l,
+            knee_right=knee_r,
+            kick_symmetry=kick_sym,
+            kick_depth_proxy=kick_depth,
+            symmetry_hips=symmetry_hips,
+            score=score,
+            body_roll=roll_abs,
+            torso_lean=torso,
+            forearm_vertical=forearm,
+            phase=phase,
+            breath_state=self.breath_side if self.breath_side != 'N' else "-",
+            confidence=conf,
+            horizontal_deviation=horizontal_dev,
+            evf_plane_angle=evf_angle,
+            wrist_velocity_y=wrist_velocity_y,
+            alignment_score=alignment_score,
+            evf_score=evf_score,
+            breathing_during_pull=breathing_during_pull
         )
         self.metrics.append(metrics)
 
@@ -459,27 +908,79 @@ class SwimAnalyzer:
             return SessionSummary(0,0,0,0,0,0,0,0,0,0,0,"No data",1.0,None,None)
 
         d = self.metrics[-1].time_s
-        scores = [m.score for m in self.metrics if m.confidence >= DEFAULT_CONF_THRESHOLD]
-        rolls = [m.body_roll for m in self.metrics if m.confidence >= DEFAULT_CONF_THRESHOLD]
-        ksyms = [m.kick_symmetry for m in self.metrics if m.confidence >= DEFAULT_CONF_THRESHOLD]
-        kdepths = [m.kick_depth_proxy for m in self.metrics if m.confidence >= DEFAULT_CONF_THRESHOLD]
-        confs = [m.confidence for m in self.metrics]
+        high_conf_metrics = [m for m in self.metrics if m.confidence >= DEFAULT_CONF_THRESHOLD]
+        
+        if not high_conf_metrics:
+            high_conf_metrics = self.metrics
 
+        scores = [m.score for m in high_conf_metrics]
+        rolls = [m.body_roll for m in high_conf_metrics]
+        ksyms = [m.kick_symmetry for m in high_conf_metrics]
+        kdepths = [m.kick_depth_proxy for m in high_conf_metrics]
+        confs = [m.confidence for m in self.metrics]
+        h_devs = [m.horizontal_deviation for m in high_conf_metrics]
+        evf_angles = [m.evf_plane_angle for m in high_conf_metrics if m.phase in ("Pull", "Push")]
+        alignment_scores = [m.alignment_score for m in high_conf_metrics]
+        evf_scores = [m.evf_score for m in high_conf_metrics if m.phase in ("Pull", "Push")]
+
+        # Stroke rate calculation
         sr = 0
         if len(self.stroke_times) >= 2:
             dur = self.stroke_times[-1] - self.stroke_times[0]
-            if dur > 0.1: sr = 60 * (len(self.stroke_times)-1) / dur
+            if dur > 0.1: 
+                sr = 60 * (len(self.stroke_times)-1) / dur
 
         bpm = (self.breath_l + self.breath_r) / (d/60) if d > 0 else 0
 
         avg_kick_sym = statistics.mean(ksyms) if ksyms else 0
         avg_kick_depth = statistics.mean(kdepths) if kdepths else 0
-        kick_status = "Good" if avg_kick_sym < DEFAULT_KICK_SYM_MAX_GOOD and DEFAULT_KICK_DEPTH_GOOD[0] < avg_kick_depth < DEFAULT_KICK_DEPTH_GOOD[1] else "Needs Work"
+        
+        # Determine kick status
+        kick_sym_ok = avg_kick_sym < DEFAULT_KICK_SYM_MAX_GOOD
+        kick_depth_ok = DEFAULT_KICK_DEPTH_GOOD[0] < avg_kick_depth < DEFAULT_KICK_DEPTH_GOOD[1]
+        if kick_sym_ok and kick_depth_ok:
+            kick_status = "Good"
+        elif kick_sym_ok or kick_depth_ok:
+            kick_status = "OK"
+        else:
+            kick_status = "Needs Work"
+
+        # Generate diagnostics
+        diagnostics = []
+        
+        avg_h_dev = statistics.mean(h_devs) if h_devs else 0
+        if avg_h_dev > DEFAULT_HORIZONTAL_DEV_OK[1]:
+            diagnostics.append("⚠️ High body alignment deviation - focus on keeping hips in line with shoulders and ankles")
+        elif avg_h_dev > DEFAULT_HORIZONTAL_DEV_GOOD[1]:
+            diagnostics.append("💡 Body alignment is OK but could be tighter - minimize hip drop")
+
+        avg_evf = statistics.mean(evf_angles) if evf_angles else 0
+        if avg_evf > DEFAULT_EVF_ANGLE_OK[1]:
+            diagnostics.append("⚠️ Early Vertical Forearm needs work - focus on catching water with vertical forearm")
+        elif avg_evf > DEFAULT_EVF_ANGLE_GOOD[1]:
+            diagnostics.append("💡 EVF is OK - work on getting forearm more vertical at catch")
+
+        if self.breaths_during_pull > 0:
+            diagnostics.append(f"⚠️ {self.breaths_during_pull} breath(s) taken during pull phase - try breathing during recovery for better EVF")
+
+        avg_roll = statistics.mean(rolls) if rolls else 0
+        if avg_roll < DEFAULT_ROLL_GOOD[0]:
+            diagnostics.append("💡 Body roll is too flat - aim for 35-55° rotation")
+        elif avg_roll > DEFAULT_ROLL_GOOD[1]:
+            diagnostics.append("⚠️ Excessive body roll - this may cause energy leaks")
+
+        breath_balance = abs(self.breath_l - self.breath_r)
+        if breath_balance > 5:
+            side = "left" if self.breath_l > self.breath_r else "right"
+            diagnostics.append(f"💡 Breathing is asymmetric (favoring {side}) - practice bilateral breathing")
+
+        if not diagnostics:
+            diagnostics.append("✅ Great technique! Keep up the good work.")
 
         return SessionSummary(
             duration_s=d,
             avg_score=statistics.mean(scores) if scores else 0,
-            avg_body_roll=statistics.mean(rolls) if rolls else 0,
+            avg_body_roll=avg_roll,
             max_body_roll=max(rolls) if rolls else 0,
             stroke_rate=sr,
             breaths_per_min=bpm,
@@ -491,11 +992,18 @@ class SwimAnalyzer:
             kick_status=kick_status,
             avg_confidence=statistics.mean(confs) if confs else 1.0,
             best_frame_bytes=self.best_bytes,
-            worst_frame_bytes=self.worst_bytes
+            worst_frame_bytes=self.worst_bytes,
+            avg_horizontal_deviation=avg_h_dev,
+            avg_evf_angle=avg_evf,
+            avg_alignment_score=statistics.mean(alignment_scores) if alignment_scores else 100,
+            avg_evf_score=statistics.mean(evf_scores) if evf_scores else 100,
+            breaths_during_pull=self.breaths_during_pull,
+            total_breaths=self.breath_l + self.breath_r,
+            diagnostics=diagnostics
         )
 
 # ─────────────────────────────────────────────
-# PLOTS
+# PLOTS - Enhanced with new metrics
 # ─────────────────────────────────────────────
 
 def generate_plots(analyzer: SwimAnalyzer):
@@ -504,27 +1012,77 @@ def generate_plots(analyzer: SwimAnalyzer):
 
     times = [m.time_s for m in analyzer.metrics]
     plt.style.use('dark_background')
-    fig, axs = plt.subplots(4, 1, figsize=(12, 16), sharex=True)
+    fig, axs = plt.subplots(5, 1, figsize=(12, 20), sharex=True)
 
-    axs[0].plot(times, [m.body_roll for m in analyzer.metrics], label="Body Roll", color='purple')
-    axs[0].axhspan(DEFAULT_ROLL_GOOD[0], DEFAULT_ROLL_GOOD[1], color='green', alpha=0.2)
-    axs[0].set_title("Body Roll Over Time")
-    axs[0].legend()
+    # 1. Body Alignment (Horizontal Deviation)
+    axs[0].plot(times, [m.horizontal_deviation for m in analyzer.metrics], 
+                label="Horizontal Deviation", color='#06b6d4', linewidth=1.5)
+    axs[0].axhspan(0, DEFAULT_HORIZONTAL_DEV_GOOD[1], color='green', alpha=0.2, label='Good Zone')
+    axs[0].axhspan(DEFAULT_HORIZONTAL_DEV_GOOD[1], DEFAULT_HORIZONTAL_DEV_OK[1], 
+                   color='yellow', alpha=0.2, label='OK Zone')
+    axs[0].set_ylabel("Degrees")
+    axs[0].set_title("Body Alignment (Shoulder-Hip-Ankle Deviation)")
+    axs[0].legend(loc='upper right')
+    axs[0].set_ylim(0, 30)
 
-    axs[1].plot(times, [m.kick_symmetry for m in analyzer.metrics], label="Kick Symmetry", color='orange')
-    axs[1].axhline(DEFAULT_KICK_SYM_MAX_GOOD, color='red', linestyle='--')
-    axs[1].set_title("Kick Symmetry (°)")
-    axs[1].legend()
+    # 2. EVF Angle
+    pull_push_times = [m.time_s for m in analyzer.metrics if m.phase in ("Pull", "Push")]
+    pull_push_evf = [m.evf_plane_angle for m in analyzer.metrics if m.phase in ("Pull", "Push")]
+    axs[1].scatter(pull_push_times, pull_push_evf, label="EVF Angle (Pull/Push)", 
+                   color='#a855f7', s=10, alpha=0.7)
+    axs[1].axhspan(0, DEFAULT_EVF_ANGLE_GOOD[1], color='green', alpha=0.2)
+    axs[1].axhspan(DEFAULT_EVF_ANGLE_GOOD[1], DEFAULT_EVF_ANGLE_OK[1], color='yellow', alpha=0.2)
+    axs[1].set_ylabel("Degrees")
+    axs[1].set_title("Early Vertical Forearm Angle (lower is better)")
+    axs[1].legend(loc='upper right')
+    axs[1].set_ylim(0, 60)
 
-    axs[2].plot(times, [m.kick_depth_proxy for m in analyzer.metrics], label="Kick Depth Proxy", color='cyan')
-    axs[2].axhspan(DEFAULT_KICK_DEPTH_GOOD[0], DEFAULT_KICK_DEPTH_GOOD[1], color='green', alpha=0.2)
-    axs[2].set_title("Kick Depth Proxy (normalized)")
-    axs[2].legend()
+    # 3. Body Roll
+    axs[2].plot(times, [m.body_roll for m in analyzer.metrics], 
+                label="Body Roll", color='#f59e0b', linewidth=1.5)
+    axs[2].axhspan(DEFAULT_ROLL_GOOD[0], DEFAULT_ROLL_GOOD[1], color='green', alpha=0.2)
+    axs[2].axhline(45, color='white', linestyle='--', alpha=0.5, label='Ideal (45°)')
+    axs[2].set_ylabel("Degrees")
+    axs[2].set_title("Body Roll Over Time")
+    axs[2].legend(loc='upper right')
 
-    axs[3].plot(times, [m.score for m in analyzer.metrics], label="Technique Score", color='lime')
-    axs[3].set_title("Technique Score Over Time")
-    axs[3].legend()
+    # 4. Kick Metrics
+    ax4 = axs[3]
+    ax4.plot(times, [m.kick_symmetry for m in analyzer.metrics], 
+             label="Kick Symmetry", color='#ef4444', linewidth=1.5)
+    ax4.axhline(DEFAULT_KICK_SYM_MAX_GOOD, color='red', linestyle='--', alpha=0.5)
+    ax4.set_ylabel("Symmetry (°)", color='#ef4444')
+    ax4.tick_params(axis='y', labelcolor='#ef4444')
+    
+    ax4b = ax4.twinx()
+    ax4b.plot(times, [m.kick_depth_proxy for m in analyzer.metrics], 
+              label="Kick Depth", color='#22c55e', linewidth=1.5, alpha=0.7)
+    ax4b.axhspan(DEFAULT_KICK_DEPTH_GOOD[0], DEFAULT_KICK_DEPTH_GOOD[1], 
+                 color='green', alpha=0.1)
+    ax4b.set_ylabel("Depth (normalized)", color='#22c55e')
+    ax4b.tick_params(axis='y', labelcolor='#22c55e')
+    ax4.set_title("Kick Metrics")
+    
+    # Combined legend
+    lines1, labels1 = ax4.get_legend_handles_labels()
+    lines2, labels2 = ax4b.get_legend_handles_labels()
+    ax4.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
 
+    # 5. Overall Score with sub-scores
+    axs[4].plot(times, [m.score for m in analyzer.metrics], 
+                label="Overall Score", color='#22c55e', linewidth=2)
+    axs[4].plot(times, [m.alignment_score for m in analyzer.metrics], 
+                label="Alignment Score", color='#06b6d4', linewidth=1, alpha=0.7)
+    axs[4].plot(times, [m.evf_score for m in analyzer.metrics], 
+                label="EVF Score", color='#a855f7', linewidth=1, alpha=0.7)
+    axs[4].axhline(70, color='yellow', linestyle='--', alpha=0.5, label='Good threshold')
+    axs[4].set_xlabel("Time (seconds)")
+    axs[4].set_ylabel("Score")
+    axs[4].set_title("Technique Scores Over Time")
+    axs[4].legend(loc='lower right')
+    axs[4].set_ylim(0, 105)
+
+    plt.tight_layout()
     buf = io.BytesIO()
     plt.savefig(buf, format="png", dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -532,7 +1090,7 @@ def generate_plots(analyzer: SwimAnalyzer):
     return buf
 
 # ─────────────────────────────────────────────
-# PDF REPORT
+# PDF REPORT - Enhanced
 # ─────────────────────────────────────────────
 
 def generate_pdf_report(summary: SessionSummary, filename: str, plot_buffer: io.BytesIO) -> io.BytesIO:
@@ -540,11 +1098,15 @@ def generate_pdf_report(summary: SessionSummary, filename: str, plot_buffer: io.
     pdf = SimpleDocTemplate(buffer, pagesize=letter, topMargin=0.5*inch, bottomMargin=0.5*inch)
     styles = getSampleStyleSheet()
     styles.add(ParagraphStyle(name='CustomTitle', fontSize=24, textColor=colors.HexColor('#06b6d4'), spaceAfter=20))
+    styles.add(ParagraphStyle(name='DiagnosticGood', fontSize=11, textColor=colors.HexColor('#22c55e'), leftIndent=20))
+    styles.add(ParagraphStyle(name='DiagnosticWarn', fontSize=11, textColor=colors.HexColor('#f59e0b'), leftIndent=20))
+    styles.add(ParagraphStyle(name='DiagnosticError', fontSize=11, textColor=colors.HexColor('#ef4444'), leftIndent=20))
 
     story = []
     story.append(Paragraph("Freestyle Swimming Technique Analysis Report", styles['CustomTitle']))
     story.append(Spacer(1, 0.2*inch))
 
+    # Session Information
     story.append(Paragraph("Session Information", styles['Heading2']))
     session_data = [
         ['File', filename],
@@ -555,25 +1117,66 @@ def generate_pdf_report(summary: SessionSummary, filename: str, plot_buffer: io.
     story.append(Table(session_data, colWidths=[2*inch, 4*inch]))
     story.append(Spacer(1, 0.3*inch))
 
-    story.append(Paragraph("Performance Metrics", styles['Heading2']))
-    metrics_data = [
-        ['Metric', 'Value', 'Status'],
-        ['Technique Score', f"{summary.avg_score:.1f}/100", 'Good' if summary.avg_score >= 70 else 'Needs Work'],
-        ['Stroke Rate', f"{summary.stroke_rate:.1f} spm", 'Good'],
-        ['Breaths/min', f"{summary.breaths_per_min:.1f}", 'Balanced' if abs(summary.breath_left - summary.breath_right) <= 5 else 'Asymmetric'],
-        ['Avg Body Roll', f"{summary.avg_body_roll:.1f}°", 'Good' if DEFAULT_ROLL_GOOD[0] <= summary.avg_body_roll <= DEFAULT_ROLL_GOOD[1] else 'Check'],
-        ['Max Body Roll', f"{summary.max_body_roll:.1f}°", 'Good' if summary.max_body_roll <= DEFAULT_ROLL_GOOD[1] else 'Excessive'],
-        ['Kick Symmetry', f"{summary.avg_kick_symmetry:.1f}°", summary.kick_status],
-        ['Kick Depth Proxy', f"{summary.avg_kick_depth:.2f}", 'Good']
+    # Overall Score Card
+    story.append(Paragraph("Overall Performance", styles['Heading2']))
+    score_color = colors.HexColor('#22c55e') if summary.avg_score >= 70 else colors.HexColor('#f59e0b') if summary.avg_score >= 50 else colors.HexColor('#ef4444')
+    story.append(Paragraph(f"<font size='36' color='{score_color}'><b>{summary.avg_score:.1f}/100</b></font>", styles['Normal']))
+    story.append(Spacer(1, 0.2*inch))
+
+    # Sub-Scores
+    story.append(Paragraph("Component Scores", styles['Heading3']))
+    subscore_data = [
+        ['Component', 'Score', 'Status'],
+        ['Body Alignment', f"{summary.avg_alignment_score:.1f}", get_zone_status(summary.avg_horizontal_deviation, DEFAULT_HORIZONTAL_DEV_GOOD, DEFAULT_HORIZONTAL_DEV_OK)],
+        ['EVF (Pull Phase)', f"{summary.avg_evf_score:.1f}", get_zone_status(summary.avg_evf_angle, DEFAULT_EVF_ANGLE_GOOD, DEFAULT_EVF_ANGLE_OK)],
+        ['Body Roll', f"{summary.avg_body_roll:.1f}°", get_zone_status(summary.avg_body_roll, DEFAULT_ROLL_GOOD, DEFAULT_ROLL_OK)],
+        ['Kick', summary.kick_status, summary.kick_status],
     ]
-    t = Table(metrics_data, colWidths=[2*inch, 2*inch, 2*inch])
+    t = Table(subscore_data, colWidths=[2*inch, 1.5*inch, 1.5*inch])
     t.setStyle(TableStyle([
         ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1e3a5f')),
         ('TEXTCOLOR', (0,0), (-1,0), colors.white),
     ]))
     story.append(t)
+    story.append(Spacer(1, 0.3*inch))
 
+    # Performance Metrics
+    story.append(Paragraph("Performance Metrics", styles['Heading2']))
+    metrics_data = [
+        ['Metric', 'Value', 'Notes'],
+        ['Stroke Rate', f"{summary.stroke_rate:.1f} spm", 'strokes per minute'],
+        ['Total Strokes', f"{summary.total_strokes}", ''],
+        ['Breaths/min', f"{summary.breaths_per_min:.1f}", f"L:{summary.breath_left} R:{summary.breath_right}"],
+        ['Breaths During Pull', f"{summary.breaths_during_pull}", 'Should be 0 ideally'],
+        ['Max Body Roll', f"{summary.max_body_roll:.1f}°", 'peak rotation'],
+        ['Avg Horizontal Dev', f"{summary.avg_horizontal_deviation:.1f}°", 'body alignment'],
+        ['Avg EVF Angle', f"{summary.avg_evf_angle:.1f}°", 'lower is better'],
+        ['Avg Kick Depth', f"{summary.avg_kick_depth:.2f}", 'relative to hip-ankle'],
+        ['Kick Symmetry', f"{summary.avg_kick_symmetry:.1f}°", 'L-R difference'],
+    ]
+    t = Table(metrics_data, colWidths=[2*inch, 1.5*inch, 2.5*inch])
+    t.setStyle(TableStyle([
+        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1e3a5f')),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+    ]))
+    story.append(t)
+    story.append(Spacer(1, 0.3*inch))
+
+    # Diagnostics
+    story.append(Paragraph("Coaching Insights", styles['Heading2']))
+    for diag in summary.diagnostics:
+        if diag.startswith("✅"):
+            style = styles['DiagnosticGood']
+        elif diag.startswith("⚠️"):
+            style = styles['DiagnosticError']
+        else:
+            style = styles['DiagnosticWarn']
+        story.append(Paragraph(diag, style))
+        story.append(Spacer(1, 0.1*inch))
+
+    # Best & Worst Frames
     if summary.best_frame_bytes or summary.worst_frame_bytes:
         story.append(Spacer(1, 0.3*inch))
         story.append(Paragraph("Best & Worst Frames (Pull Phase)", styles['Heading2']))
@@ -581,22 +1184,23 @@ def generate_pdf_report(summary: SessionSummary, filename: str, plot_buffer: io.
             img = RLImage(io.BytesIO(summary.best_frame_bytes))
             img.drawWidth = 3*inch
             img.drawHeight = 2*inch
-            story.append(Paragraph("Best Pull Frame", styles['Normal']))
+            story.append(Paragraph("Best Pull Frame:", styles['Normal']))
             story.append(img)
         if summary.worst_frame_bytes:
             img = RLImage(io.BytesIO(summary.worst_frame_bytes))
             img.drawWidth = 3*inch
             img.drawHeight = 2*inch
-            story.append(Paragraph("Worst Pull Frame", styles['Normal']))
+            story.append(Paragraph("Worst Pull Frame:", styles['Normal']))
             story.append(img)
 
+    # Charts
     if plot_buffer.getvalue():
         story.append(PageBreak())
         story.append(Paragraph("Analysis Charts", styles['Heading2']))
         plot_buffer.seek(0)
         img = RLImage(plot_buffer)
         img.drawWidth = 7*inch
-        img.drawHeight = 9*inch
+        img.drawHeight = 11*inch
         story.append(img)
 
     pdf.build(story)
@@ -604,7 +1208,7 @@ def generate_pdf_report(summary: SessionSummary, filename: str, plot_buffer: io.
     return buffer
 
 # ─────────────────────────────────────────────
-# CSV & ZIP
+# CSV & ZIP - Enhanced
 # ─────────────────────────────────────────────
 
 def export_to_csv(analyzer: SwimAnalyzer):
@@ -612,16 +1216,21 @@ def export_to_csv(analyzer: SwimAnalyzer):
         return io.BytesIO()
     data = {
         'time_s': [m.time_s for m in analyzer.metrics],
-        'elbow_angle': [m.elbow_angle for m in analyzer.metrics],
-        'kick_symmetry': [m.kick_symmetry for m in analyzer.metrics],
-        'kick_depth_proxy': [m.kick_depth_proxy for m in analyzer.metrics],
+        'phase': [m.phase for m in analyzer.metrics],
+        'score': [m.score for m in analyzer.metrics],
+        'alignment_score': [m.alignment_score for m in analyzer.metrics],
+        'evf_score': [m.evf_score for m in analyzer.metrics],
+        'horizontal_deviation': [m.horizontal_deviation for m in analyzer.metrics],
+        'evf_plane_angle': [m.evf_plane_angle for m in analyzer.metrics],
         'body_roll': [m.body_roll for m in analyzer.metrics],
         'torso_lean': [m.torso_lean for m in analyzer.metrics],
-        'forearm_vertical': [m.forearm_vertical for m in analyzer.metrics],
-        'phase': [m.phase for m in analyzer.metrics],
+        'kick_symmetry': [m.kick_symmetry for m in analyzer.metrics],
+        'kick_depth': [m.kick_depth_proxy for m in analyzer.metrics],
+        'elbow_angle': [m.elbow_angle for m in analyzer.metrics],
+        'wrist_velocity_y': [m.wrist_velocity_y for m in analyzer.metrics],
         'breath_state': [m.breath_state for m in analyzer.metrics],
+        'breathing_during_pull': [m.breathing_during_pull for m in analyzer.metrics],
         'confidence': [m.confidence for m in analyzer.metrics],
-        'score': [m.score for m in analyzer.metrics]
     }
     df = pd.DataFrame(data)
     buf = io.BytesIO()
@@ -646,30 +1255,44 @@ def create_results_bundle(video_path, csv_buf, pdf_buf, plot_buf, timestamp, ana
     return zip_buf
 
 # ─────────────────────────────────────────────
-# MAIN APP – with fixed timestamp
+# MAIN APP - Enhanced UI
 # ─────────────────────────────────────────────
 
 def main():
-    st.set_page_config(layout="wide", page_title="Freestyle Swim Analyzer Pro")
+    st.set_page_config(layout="wide", page_title="Freestyle Swim Analyzer Pro v2")
     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
-    st.title("🏊 Freestyle Swim Technique Analyzer Pro")
-    st.markdown("AI-powered analysis (MediaPipe Tasks API – fixed timestamp)")
+    st.title("🏊 Freestyle Swim Technique Analyzer Pro v2")
+    st.markdown("AI-powered analysis with **enhanced biomechanical metrics**")
 
     if not MEDIAPIPE_TASKS_AVAILABLE:
         st.error("MediaPipe Tasks not installed. Run: pip install mediapipe>=0.10.14")
         return
 
     with st.sidebar:
-        st.header("Athlete & Settings")
+        st.header("⚙️ Athlete & Settings")
         height = st.slider("Height (cm)", 150, 200, 170)
-        discipline = st.selectbox("Discipline", ["pool", "triathlon"])
+        discipline = st.selectbox("Discipline", ["pool", "triathlon", "open water"])
+        
+        st.subheader("Detection Settings")
         conf_thresh = st.slider("Confidence Threshold", 0.3, 0.7, DEFAULT_CONF_THRESHOLD, 0.05)
-        yaw_thresh = st.slider("Yaw Threshold", 0.05, 0.3, DEFAULT_YAW_THRESHOLD, 0.01)
+        yaw_thresh = st.slider("Breath Detection Sensitivity", 0.05, 0.3, DEFAULT_YAW_THRESHOLD, 0.01)
+        
+        st.subheader("ℹ️ What's New in v2")
+        st.markdown("""
+        - **Horizontal Deviation**: Measures shoulder-hip-ankle alignment
+        - **True EVF Angle**: Forearm angle via plane calculation  
+        - **Enhanced Phase Detection**: Uses wrist velocity
+        - **Relative Kick Depth**: Normalized to body size
+        - **Breathing Penalty**: Detects breaths during pull phase
+        - **Separate Score Cards**: Alignment, EVF, Overall
+        - **Color-Coded Overlays**: Green/Amber/Red zones
+        - **Plain-Language Diagnostics**: Actionable coaching tips
+        """)
 
     athlete = AthleteProfile(height, discipline)
 
-    uploaded = st.file_uploader("Upload video", type=["mp4", "mov"])
+    uploaded = st.file_uploader("📹 Upload swimming video", type=["mp4", "mov", "avi"])
 
     if uploaded:
         try:
@@ -699,17 +1322,13 @@ def main():
         try:
             while cap.isOpened():
                 ret, frame = cap.read()
-                if not ret: break
+                if not ret: 
+                    break
 
-                # Monotonically increasing timestamp for MediaPipe (in milliseconds)
-                # Using frame_idx * 33 gives roughly 30fps equivalent spacing
-                # The key is that it's STRICTLY INCREASING
-                timestamp_ms = frame_idx * 33 + 1  # +1 ensures we never start at 0 for first frame
-
-                # Real time for your metrics (stroke/breath timing)
+                timestamp_ms = frame_idx * 33 + 1
                 real_t = frame_idx / fps
 
-                annotated, _ = analyzer.process(frame, real_t, timestamp_ms)
+                annotated, _ = analyzer.process(frame, real_t, timestamp_ms, fps)
                 writer.write(annotated)
 
                 frame_idx += 1
@@ -731,7 +1350,6 @@ def main():
             csv_buf = export_to_csv(analyzer)
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             
-            # Read video into memory before creating zip and displaying
             video_bytes = None
             if os.path.exists(out_path):
                 with open(out_path, 'rb') as f:
@@ -741,7 +1359,6 @@ def main():
 
             analyzer.close()
 
-            # Now safe to delete the temp file
             try:
                 os.unlink(out_path)
             except:
@@ -749,32 +1366,79 @@ def main():
 
             st.success("✅ Analysis complete!")
 
-            score_color = "#22c55e" if summary.avg_score >= 70 else "#eab308" if summary.avg_score >= 50 else "#ef4444"
-            st.markdown(f"""
-            <div class="score-card">
-                <h2>Technique Score</h2>
-                <div style="font-size: 48px; font-weight: bold; color: {score_color};">{summary.avg_score:.1f}/100</div>
-            </div>
-            """, unsafe_allow_html=True)
+            # Display score cards in columns
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                score_color = "#22c55e" if summary.avg_score >= 70 else "#eab308" if summary.avg_score >= 50 else "#ef4444"
+                st.markdown(f"""
+                <div class="score-card">
+                    <h3>Overall Score</h3>
+                    <div style="font-size: 42px; font-weight: bold; color: {score_color};">{summary.avg_score:.1f}</div>
+                    <div style="font-size: 14px; opacity: 0.8;">out of 100</div>
+                </div>
+                """, unsafe_allow_html=True)
 
-            cols = st.columns(4)
+            with col2:
+                align_color = "#22c55e" if summary.avg_alignment_score >= 80 else "#eab308" if summary.avg_alignment_score >= 60 else "#ef4444"
+                st.markdown(f"""
+                <div class="alignment-card">
+                    <h3>Alignment Score</h3>
+                    <div style="font-size: 42px; font-weight: bold;">{summary.avg_alignment_score:.1f}</div>
+                    <div style="font-size: 14px; opacity: 0.8;">Deviation: {summary.avg_horizontal_deviation:.1f}°</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            with col3:
+                evf_color = "#22c55e" if summary.avg_evf_score >= 80 else "#eab308" if summary.avg_evf_score >= 60 else "#ef4444"
+                st.markdown(f"""
+                <div class="evf-card">
+                    <h3>EVF Score</h3>
+                    <div style="font-size: 42px; font-weight: bold;">{summary.avg_evf_score:.1f}</div>
+                    <div style="font-size: 14px; opacity: 0.8;">Angle: {summary.avg_evf_angle:.1f}°</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            # Metrics row
+            cols = st.columns(5)
             cols[0].metric("Stroke Rate", f"{summary.stroke_rate:.1f} spm")
             cols[1].metric("Breaths/min", f"{summary.breaths_per_min:.1f}")
             cols[2].metric("Avg Body Roll", f"{summary.avg_body_roll:.1f}°")
             cols[3].metric("Kick Status", summary.kick_status)
+            cols[4].metric("Breaths in Pull", f"{summary.breaths_during_pull}", 
+                          delta="Good" if summary.breaths_during_pull == 0 else "Reduce",
+                          delta_color="normal" if summary.breaths_during_pull == 0 else "inverse")
 
+            # Diagnostics section
+            st.subheader("🎯 Coaching Insights")
+            for diag in summary.diagnostics:
+                if diag.startswith("✅"):
+                    st.success(diag)
+                elif diag.startswith("⚠️"):
+                    st.error(diag)
+                else:
+                    st.warning(diag)
+
+            # Best/Worst frames
+            st.subheader("📸 Key Frames")
             col1, col2 = st.columns(2)
             with col1:
                 if summary.best_frame_bytes:
                     st.image(summary.best_frame_bytes, caption="Best Pull Frame")
+                else:
+                    st.info("No best frame captured")
             with col2:
                 if summary.worst_frame_bytes:
                     st.image(summary.worst_frame_bytes, caption="Worst Pull Frame")
+                else:
+                    st.info("No worst frame captured")
 
-            # Display video from memory bytes
+            # Video player
+            st.subheader("🎬 Annotated Video")
             if video_bytes:
                 st.video(video_bytes)
 
+            # Download button
             st.download_button(
                 "📦 Download Full Results (ZIP)",
                 zip_buf,
