@@ -1012,7 +1012,7 @@ def generate_plots(analyzer: SwimAnalyzer):
 
     times = [m.time_s for m in analyzer.metrics]
     plt.style.use('dark_background')
-    fig, axs = plt.subplots(5, 1, figsize=(12, 20), sharex=True)
+    fig, axs = plt.subplots(5, 1, figsize=(10, 14), sharex=True)
 
     # 1. Body Alignment (Horizontal Deviation)
     axs[0].plot(times, [m.horizontal_deviation for m in analyzer.metrics], 
@@ -1199,8 +1199,9 @@ def generate_pdf_report(summary: SessionSummary, filename: str, plot_buffer: io.
         story.append(Paragraph("Analysis Charts", styles['Heading2']))
         plot_buffer.seek(0)
         img = RLImage(plot_buffer)
-        img.drawWidth = 7*inch
-        img.drawHeight = 11*inch
+        # Scale to fit page (letter is 8.5x11, with margins we have ~7x9 usable)
+        img.drawWidth = 6.5*inch
+        img.drawHeight = 8.5*inch
         story.append(img)
 
     pdf.build(story)
