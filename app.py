@@ -249,18 +249,31 @@ def get_swim_metrics_html(metrics: dict) -> str:
     """Generate complete HTML for swim metrics visualization"""
     
     h_dev = metrics.get('horizontal_deviation', 0)
+    v_drop = metrics.get('vertical_drop', 0)
     evf = metrics.get('evf_angle', 0)
+    dropped_elbow_pct = metrics.get('dropped_elbow_pct', 0)
     roll = metrics.get('body_roll', 45)
     kick_d = metrics.get('kick_depth', 0.25)
     kick_s = metrics.get('kick_symmetry', 0)
     
-    h_class = get_viz_zone_class(h_dev, (0, 8), (0, 15))
-    h_label = get_viz_zone_label(h_dev, (0, 8), (0, 15))
-    h_color = get_viz_zone_color(h_dev, (0, 8), (0, 15))
+    # Alignment now considers vertical drop as the primary issue
+    h_class = get_viz_zone_class(v_drop, (0, 8), (0, 15))
+    h_label = get_viz_zone_label(v_drop, (0, 8), (0, 15))
+    h_color = get_viz_zone_color(v_drop, (0, 8), (0, 15))
     
-    evf_class = get_viz_zone_class(evf, (0, 25), (0, 40))
-    evf_label = get_viz_zone_label(evf, (0, 25), (0, 40))
-    evf_color = get_viz_zone_color(evf, (0, 25), (0, 40))
+    # EVF class considers dropped elbow percentage
+    if dropped_elbow_pct > 50:
+        evf_class = "bad"
+        evf_label = "🚨 DROPPED"
+        evf_color = "#ef4444"
+    elif dropped_elbow_pct > 20:
+        evf_class = "ok"
+        evf_label = "⚠️ Dropping"
+        evf_color = "#eab308"
+    else:
+        evf_class = get_viz_zone_class(evf, (0, 25), (0, 40))
+        evf_label = get_viz_zone_label(evf, (0, 25), (0, 40))
+        evf_color = get_viz_zone_color(evf, (0, 25), (0, 40))
     
     roll_class = get_viz_zone_class(roll, (35, 55), (25, 65))
     roll_label = get_viz_zone_label(roll, (35, 55), (25, 65))
@@ -386,17 +399,18 @@ def get_swim_metrics_html(metrics: dict) -> str:
                     <span class="metric-badge {h_class}">{h_label}</span>
                 </div>
                 <div class="metric-content">
-                    <div class="silhouette-container">{get_alignment_silhouette(h_dev)}</div>
+                    <div class="silhouette-container">{get_alignment_silhouette(v_drop)}</div>
                     <div class="metric-details">
-                        <div class="metric-value {h_class}">{h_dev:.1f}<span class="metric-unit">°</span></div>
+                        <div class="metric-value {h_class}">{v_drop:.1f}<span class="metric-unit">°</span></div>
+                        <div style="font-size: 10px; color: #64748b; margin-bottom: 6px;">Vertical drop (hip sink)</div>
                         <div class="range-bar">
                             <div class="range-zone ok-zone" style="left: 0%; width: 60%;"></div>
                             <div class="range-zone good-zone" style="left: 0%; width: 32%;"></div>
-                            <div class="range-indicator" style="left: {min(100, h_dev / 25 * 100):.1f}%; background: {h_color};"></div>
+                            <div class="range-indicator" style="left: {min(100, v_drop / 25 * 100):.1f}%; background: {h_color};"></div>
                         </div>
                         <div class="range-labels">
-                            <span>Perfect</span>
-                            <span class="warn">Hip drop →</span>
+                            <span>Streamlined</span>
+                            <span class="warn">Sinking →</span>
                         </div>
                     </div>
                 </div>
@@ -412,13 +426,16 @@ def get_swim_metrics_html(metrics: dict) -> str:
                     <div class="silhouette-container">{get_evf_silhouette(evf)}</div>
                     <div class="metric-details">
                         <div class="metric-value {evf_class}">{evf:.1f}<span class="metric-unit">°</span></div>
+                        <div style="font-size: 10px; color: {'#ef4444' if dropped_elbow_pct > 30 else '#64748b'}; margin-bottom: 6px;">
+                            {'🚨 ' if dropped_elbow_pct > 50 else ''}Dropped elbow: {dropped_elbow_pct:.0f}% of catch
+                        </div>
                         <div class="range-bar">
                             <div class="range-zone ok-zone" style="left: 0%; width: 66%;"></div>
                             <div class="range-zone good-zone" style="left: 0%; width: 42%;"></div>
                             <div class="range-indicator" style="left: {min(100, evf / 60 * 100):.1f}%; background: {evf_color};"></div>
                         </div>
                         <div class="range-labels">
-                            <span>Vertical</span>
+                            <span>High elbow</span>
                             <span class="warn">Dropped elbow →</span>
                         </div>
                     </div>
@@ -551,8 +568,12 @@ class FrameMetrics:
     breath_state: str
     confidence: float = 1.0
     # New metrics
-    horizontal_deviation: float = 0.0  # Shoulder-hip-ankle alignment
-    evf_plane_angle: float = 0.0       # EVF via plane calculation
+    horizontal_deviation: float = 0.0  # Combined alignment score
+    vertical_drop: float = 0.0         # Hip/leg sinking angle
+    evf_plane_angle: float = 0.0       # EVF quality score
+    is_dropped_elbow: bool = False     # True if elbow below wrist (bad!)
+    evf_status: str = ""               # Descriptive EVF status
+    alignment_status: str = ""         # Descriptive alignment status
     wrist_velocity_y: float = 0.0      # For phase detection
     alignment_score: float = 100.0     # Sub-score for alignment
     evf_score: float = 100.0           # Sub-score for EVF
@@ -577,7 +598,10 @@ class SessionSummary:
     worst_frame_bytes: Optional[bytes] = None
     # New summary metrics
     avg_horizontal_deviation: float = 0.0
+    avg_vertical_drop: float = 0.0      # Hip/leg sinking
     avg_evf_angle: float = 0.0
+    dropped_elbow_frames: int = 0       # Count of frames with dropped elbow
+    dropped_elbow_pct: float = 0.0      # Percentage of pull frames with dropped elbow
     avg_alignment_score: float = 100.0
     avg_evf_score: float = 100.0
     breaths_during_pull: int = 0
@@ -611,10 +635,18 @@ def compute_forearm_vertical(lm_pixel: Dict):
     dy = lm_pixel["left_wrist"][1] - lm_pixel["left_elbow"][1]
     return abs(math.degrees(math.atan2(dx, -dy)))
 
-def compute_horizontal_deviation(lm_pixel: Dict):
+def compute_horizontal_deviation(lm_pixel: Dict) -> Tuple[float, float, str]:
     """
-    NEW: Calculate horizontal body alignment (shoulder-hip-ankle line)
-    Measures lateral deviation from a straight body line
+    Calculate body alignment including VERTICAL sinking (not just lateral).
+    
+    Measures:
+    1. Lateral deviation (snake swimming / hip sway)
+    2. Vertical drop (hip/leg sinking below shoulders)
+    
+    Returns:
+        - total_deviation: combined alignment score (lower is better)
+        - vertical_drop: how much hips sink below shoulder line (in degrees)
+        - status: descriptive status
     """
     # Get midpoints
     mid_shoulder = np.array([
@@ -630,35 +662,76 @@ def compute_horizontal_deviation(lm_pixel: Dict):
         (lm_pixel["left_ankle"][1] + lm_pixel["right_ankle"][1]) / 2
     ])
     
-    # Calculate angle deviation from straight line
-    # Vector from shoulder to ankle (ideal body line)
+    # Calculate body length for normalization
+    body_length = np.linalg.norm(mid_ankle - mid_shoulder)
+    if body_length < 10:
+        return 0.0, 0.0, "No data"
+    
+    # 1. LATERAL DEVIATION (side-to-side snake swimming)
     ideal_line = mid_ankle - mid_shoulder
-    # Vector from shoulder to hip
-    to_hip = mid_hip - mid_shoulder
-    
-    # Project hip onto ideal line
     ideal_len = np.linalg.norm(ideal_line)
-    if ideal_len < 1:
-        return 0.0
     
-    ideal_unit = ideal_line / ideal_len
-    proj_len = np.dot(to_hip, ideal_unit)
-    proj_point = mid_shoulder + proj_len * ideal_unit
+    if ideal_len > 1:
+        ideal_unit = ideal_line / ideal_len
+        to_hip = mid_hip - mid_shoulder
+        proj_len = np.dot(to_hip, ideal_unit)
+        proj_point = mid_shoulder + proj_len * ideal_unit
+        lateral_dev_pixels = np.linalg.norm(mid_hip - proj_point)
+        lateral_deviation = math.degrees(math.atan2(lateral_dev_pixels, body_length / 2))
+    else:
+        lateral_deviation = 0.0
     
-    # Lateral deviation
-    deviation = np.linalg.norm(mid_hip - proj_point)
+    # 2. VERTICAL DROP (hips/legs sinking - critical for drag!)
+    # In a streamlined position, shoulder-hip-ankle should be roughly horizontal
+    # In image coordinates: higher Y = lower in water (sinking)
     
-    # Convert to angle (approximate)
-    deviation_angle = math.degrees(math.atan2(deviation, ideal_len / 2))
+    # Calculate angle from horizontal: how much are legs/hips dropping?
+    dx = mid_ankle[0] - mid_shoulder[0]
+    dy = mid_ankle[1] - mid_shoulder[1]  # Positive = ankles below shoulders (sinking)
     
-    return abs(deviation_angle)
+    # Body angle from horizontal (0° = flat, positive = feet sinking)
+    body_angle_from_horizontal = math.degrees(math.atan2(dy, abs(dx) + 0.001))
+    
+    # Also check hip drop specifically
+    hip_dx = mid_hip[0] - mid_shoulder[0]
+    hip_dy = mid_hip[1] - mid_shoulder[1]
+    hip_drop_angle = math.degrees(math.atan2(hip_dy, abs(hip_dx) + 0.001))
+    
+    # Vertical drop is the max of body angle and hip drop (only count sinking, not rising)
+    vertical_drop = max(0, body_angle_from_horizontal, hip_drop_angle)
+    
+    # Combined deviation score
+    total_deviation = lateral_deviation + vertical_drop
+    
+    # Status determination
+    if vertical_drop > 15:
+        status = "Sinking hips/legs"
+    elif vertical_drop > 8:
+        status = "Slight hip drop"
+    elif lateral_deviation > 10:
+        status = "Snake swimming"
+    elif total_deviation <= 8:
+        status = "Good alignment"
+    else:
+        status = "OK alignment"
+    
+    return total_deviation, vertical_drop, status
 
-def compute_evf_plane_angle(lm_pixel: Dict):
+def compute_evf_plane_angle(lm_pixel: Dict) -> Tuple[float, bool, str]:
     """
-    NEW: Calculate Early Vertical Forearm angle via shoulder-elbow-wrist plane
-    Measures how vertical the forearm is relative to the direction of travel
+    Calculate Early Vertical Forearm quality.
+    
+    Good EVF requires:
+    1. Forearm near vertical (pointing down)
+    2. Elbow HIGHER than wrist (high elbow catch) - CRITICAL!
+    3. Elbow staying near surface while hand reaches deep
+    
+    Returns:
+        - effective_angle: EVF quality score (lower is better, includes penalties)
+        - is_dropped_elbow: True if elbow is below wrist (bad technique!)
+        - evf_status: descriptive status string
     """
-    # Use the arm that's more likely in the pull phase (lower wrist)
+    # Use the arm that's more likely in the pull phase (lower wrist = catching water)
     left_wrist_y = lm_pixel["left_wrist"][1]
     right_wrist_y = lm_pixel["right_wrist"][1]
     
@@ -671,27 +744,49 @@ def compute_evf_plane_angle(lm_pixel: Dict):
         elbow = np.array(lm_pixel["right_elbow"])
         wrist = np.array(lm_pixel["right_wrist"])
     
-    # Vector from elbow to wrist (forearm)
+    # === CHECK 1: Is elbow HIGHER than wrist? ===
+    # In image coordinates: lower Y value = higher position in frame
+    # For good EVF, elbow.y should be LESS than wrist.y (elbow above wrist)
+    elbow_wrist_diff = wrist[1] - elbow[1]  # Positive = good (wrist below elbow)
+    elbow_above_wrist = elbow_wrist_diff > 10  # Need meaningful difference
+    
+    # === CHECK 2: Forearm angle from vertical ===
     forearm = wrist - elbow
-    
-    # Vector from shoulder to elbow (upper arm)
-    upper_arm = elbow - shoulder
-    
-    # Ideal EVF: forearm should be vertical (pointing down in image coords)
-    # We measure angle from vertical
     vertical = np.array([0, 1])  # Down in image coordinates
     
-    # Project forearm onto 2D and measure angle from vertical
-    forearm_2d = forearm[:2] if len(forearm) > 2 else forearm
-    forearm_len = np.linalg.norm(forearm_2d)
-    
+    forearm_len = np.linalg.norm(forearm)
     if forearm_len < 1:
-        return 0.0
+        return 0.0, False, "No data"
     
-    cos_angle = np.dot(forearm_2d, vertical) / forearm_len
-    angle = math.degrees(math.acos(np.clip(cos_angle, -1, 1)))
+    cos_angle = np.dot(forearm, vertical) / forearm_len
+    forearm_angle = math.degrees(math.acos(np.clip(cos_angle, -1, 1)))
     
-    return angle
+    # === CHECK 3: Elbow drop relative to shoulder ===
+    # Elbow shouldn't drop too far below shoulder during catch
+    elbow_drop_from_shoulder = elbow[1] - shoulder[1]  # Positive = elbow below shoulder
+    excessive_elbow_drop = elbow_drop_from_shoulder > 80  # Threshold in pixels
+    
+    # === DETERMINE EVF QUALITY ===
+    is_dropped_elbow = not elbow_above_wrist or excessive_elbow_drop
+    
+    if is_dropped_elbow:
+        evf_status = "DROPPED ELBOW"
+        # Heavy penalty - this is the main technique flaw you identified
+        effective_angle = forearm_angle + 35
+    elif forearm_angle <= 20 and elbow_above_wrist:
+        evf_status = "Excellent EVF"
+        effective_angle = forearm_angle
+    elif forearm_angle <= 30:
+        evf_status = "Good EVF"
+        effective_angle = forearm_angle
+    elif forearm_angle <= 45:
+        evf_status = "OK EVF"
+        effective_angle = forearm_angle
+    else:
+        evf_status = "Sweeping (no catch)"
+        effective_angle = forearm_angle + 10  # Small penalty for sweep
+    
+    return effective_angle, is_dropped_elbow, evf_status
 
 def compute_kick_depth_relative(lm_pixel: Dict):
     """
@@ -990,6 +1085,7 @@ class SwimAnalyzer:
         self.kick_depth_buffer = deque(maxlen=7)
         self.horizontal_dev_buffer = deque(maxlen=7)
         self.evf_buffer = deque(maxlen=7)
+        self.vertical_drop_buffer = deque(maxlen=7)
         
         # Track last timestamp and wrist position
         self.last_timestamp_ms = -1
@@ -997,6 +1093,10 @@ class SwimAnalyzer:
         
         # Breathing during pull tracking
         self.breaths_during_pull = 0
+        
+        # Dropped elbow tracking
+        self.dropped_elbow_frames = 0
+        self.pull_phase_frames = 0
 
     def _init_landmarker(self):
         if not MEDIAPIPE_TASKS_AVAILABLE:
@@ -1113,11 +1213,11 @@ class SwimAnalyzer:
         )
         self.prev_wrist_y = current_wrist_y
 
-        # NEW: Calculate horizontal deviation (body alignment)
-        horizontal_dev_raw = compute_horizontal_deviation(lm_pixel)
+        # NEW: Calculate horizontal deviation (body alignment) - now returns tuple
+        horizontal_dev_raw, vertical_drop_raw, alignment_status = compute_horizontal_deviation(lm_pixel)
         
-        # NEW: Calculate EVF plane angle
-        evf_angle_raw = compute_evf_plane_angle(lm_pixel)
+        # NEW: Calculate EVF plane angle - now returns tuple with dropped elbow detection
+        evf_angle_raw, is_dropped_elbow, evf_status = compute_evf_plane_angle(lm_pixel)
         
         # NEW: Calculate kick depth relative to hip-ankle span
         kick_depth_raw = compute_kick_depth_relative(lm_pixel)
@@ -1168,13 +1268,21 @@ class SwimAnalyzer:
         self.kick_depth_buffer.append(kick_depth_raw)
         self.horizontal_dev_buffer.append(horizontal_dev_raw)
         self.evf_buffer.append(evf_angle_raw)
+        self.vertical_drop_buffer.append(vertical_drop_raw)
 
         torso = statistics.mean(self.torso_buffer) if self.torso_buffer else torso_raw
         forearm = statistics.mean(self.forearm_buffer) if self.forearm_buffer else forearm_raw
         kick_depth = statistics.mean(self.kick_depth_buffer) if self.kick_depth_buffer else kick_depth_raw
         horizontal_dev = statistics.mean(self.horizontal_dev_buffer) if self.horizontal_dev_buffer else horizontal_dev_raw
         evf_angle = statistics.mean(self.evf_buffer) if self.evf_buffer else evf_angle_raw
+        vertical_drop = statistics.mean(self.vertical_drop_buffer) if self.vertical_drop_buffer else vertical_drop_raw
         roll_abs = abs(roll)
+        
+        # Track dropped elbow during pull phase
+        if phase in ("Pull", "Push"):
+            self.pull_phase_frames += 1
+            if is_dropped_elbow:
+                self.dropped_elbow_frames += 1
 
         # Draw landmarks
         for lm in landmarks:
@@ -1307,7 +1415,11 @@ class SwimAnalyzer:
             breath_state=self.breath_side if self.breath_side != 'N' else "-",
             confidence=conf,
             horizontal_deviation=horizontal_dev,
+            vertical_drop=vertical_drop,
             evf_plane_angle=evf_angle,
+            is_dropped_elbow=is_dropped_elbow,
+            evf_status=evf_status,
+            alignment_status=alignment_status,
             wrist_velocity_y=wrist_velocity_y,
             alignment_score=alignment_score,
             evf_score=evf_score,
@@ -1337,6 +1449,7 @@ class SwimAnalyzer:
         kdepths = [m.kick_depth_proxy for m in high_conf_metrics]
         confs = [m.confidence for m in self.metrics]
         h_devs = [m.horizontal_deviation for m in high_conf_metrics]
+        v_drops = [m.vertical_drop for m in high_conf_metrics]
         evf_angles = [m.evf_plane_angle for m in high_conf_metrics if m.phase in ("Pull", "Push")]
         alignment_scores = [m.alignment_score for m in high_conf_metrics]
         evf_scores = [m.evf_score for m in high_conf_metrics if m.phase in ("Pull", "Push")]
@@ -1363,34 +1476,56 @@ class SwimAnalyzer:
         else:
             kick_status = "Needs Work"
 
-        # Generate diagnostics
+        # Calculate dropped elbow percentage
+        dropped_elbow_pct = (self.dropped_elbow_frames / self.pull_phase_frames * 100) if self.pull_phase_frames > 0 else 0
+        
+        # Calculate averages
+        avg_h_dev = statistics.mean(h_devs) if h_devs else 0
+        avg_v_drop = statistics.mean(v_drops) if v_drops else 0
+        avg_evf = statistics.mean(evf_angles) if evf_angles else 0
+        avg_roll = statistics.mean(rolls) if rolls else 0
+
+        # Generate diagnostics - prioritized by importance
         diagnostics = []
         
-        avg_h_dev = statistics.mean(h_devs) if h_devs else 0
+        # 1. DROPPED ELBOW - Most critical EVF issue
+        if dropped_elbow_pct > 50:
+            diagnostics.append(f"🚨 DROPPED ELBOW detected in {dropped_elbow_pct:.0f}% of catch frames - this is your #1 priority! Keep elbow HIGH and above wrist during the catch.")
+        elif dropped_elbow_pct > 20:
+            diagnostics.append(f"⚠️ Dropped elbow detected in {dropped_elbow_pct:.0f}% of catch frames - focus on 'elbow up' cue during entry and catch.")
+        
+        # 2. VERTICAL DROP / SINKING - Critical for drag
+        if avg_v_drop > 15:
+            diagnostics.append("🚨 SINKING HIPS/LEGS - your lower body is dragging. Focus on: head position (look down), core engagement, and kick from hips.")
+        elif avg_v_drop > 8:
+            diagnostics.append("⚠️ Slight hip drop detected - engage core and press chest down slightly to lift hips.")
+        
+        # 3. Horizontal alignment (lateral)
         if avg_h_dev > DEFAULT_HORIZONTAL_DEV_OK[1]:
-            diagnostics.append("⚠️ High body alignment deviation - focus on keeping hips in line with shoulders and ankles")
-        elif avg_h_dev > DEFAULT_HORIZONTAL_DEV_GOOD[1]:
-            diagnostics.append("💡 Body alignment is OK but could be tighter - minimize hip drop")
+            diagnostics.append("⚠️ Body alignment deviation - you may be 'snake swimming'. Focus on rotating around your spine axis.")
+        
+        # 4. EVF angle (if not already flagged for dropped elbow)
+        if dropped_elbow_pct <= 20:
+            if avg_evf > DEFAULT_EVF_ANGLE_OK[1]:
+                diagnostics.append("⚠️ EVF needs work - focus on 'fingertips down, elbow up' during the catch.")
+            elif avg_evf > DEFAULT_EVF_ANGLE_GOOD[1]:
+                diagnostics.append("💡 EVF is OK - work on reaching forward then dropping fingertips before pulling.")
 
-        avg_evf = statistics.mean(evf_angles) if evf_angles else 0
-        if avg_evf > DEFAULT_EVF_ANGLE_OK[1]:
-            diagnostics.append("⚠️ Early Vertical Forearm needs work - focus on catching water with vertical forearm")
-        elif avg_evf > DEFAULT_EVF_ANGLE_GOOD[1]:
-            diagnostics.append("💡 EVF is OK - work on getting forearm more vertical at catch")
-
+        # 5. Breathing during pull
         if self.breaths_during_pull > 0:
-            diagnostics.append(f"⚠️ {self.breaths_during_pull} breath(s) taken during pull phase - try breathing during recovery for better EVF")
+            diagnostics.append(f"⚠️ {self.breaths_during_pull} breath(s) during pull phase - breathe during recovery to maintain EVF.")
 
-        avg_roll = statistics.mean(rolls) if rolls else 0
+        # 6. Body roll
         if avg_roll < DEFAULT_ROLL_GOOD[0]:
-            diagnostics.append("💡 Body roll is too flat - aim for 35-55° rotation")
+            diagnostics.append("💡 Body roll is too flat - aim for 35-55° rotation to engage lats.")
         elif avg_roll > DEFAULT_ROLL_GOOD[1]:
-            diagnostics.append("⚠️ Excessive body roll - this may cause energy leaks")
+            diagnostics.append("⚠️ Excessive body roll - this may cause energy leaks and over-rotation.")
 
+        # 7. Breathing balance
         breath_balance = abs(self.breath_l - self.breath_r)
         if breath_balance > 5:
             side = "left" if self.breath_l > self.breath_r else "right"
-            diagnostics.append(f"💡 Breathing is asymmetric (favoring {side}) - practice bilateral breathing")
+            diagnostics.append(f"💡 Breathing is asymmetric (favoring {side}) - practice bilateral breathing.")
 
         if not diagnostics:
             diagnostics.append("✅ Great technique! Keep up the good work.")
@@ -1412,7 +1547,10 @@ class SwimAnalyzer:
             best_frame_bytes=self.best_bytes,
             worst_frame_bytes=self.worst_bytes,
             avg_horizontal_deviation=avg_h_dev,
+            avg_vertical_drop=avg_v_drop,
             avg_evf_angle=avg_evf,
+            dropped_elbow_frames=self.dropped_elbow_frames,
+            dropped_elbow_pct=dropped_elbow_pct,
             avg_alignment_score=statistics.mean(alignment_scores) if alignment_scores else 100,
             avg_evf_score=statistics.mean(evf_scores) if evf_scores else 100,
             breaths_during_pull=self.breaths_during_pull,
@@ -1789,7 +1927,9 @@ def main():
             st.subheader("📊 Technique Breakdown")
             metrics_for_viz = {
                 'horizontal_deviation': summary.avg_horizontal_deviation,
+                'vertical_drop': summary.avg_vertical_drop,
                 'evf_angle': summary.avg_evf_angle,
+                'dropped_elbow_pct': summary.dropped_elbow_pct,
                 'body_roll': summary.avg_body_roll,
                 'kick_depth': summary.avg_kick_depth,
                 'kick_symmetry': summary.avg_kick_symmetry,
