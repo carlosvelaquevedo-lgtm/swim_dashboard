@@ -2149,4 +2149,6 @@ def generate_plots(analyzer: SwimAnalyzer):
     lines1, labels1 = ax4.get_legend_handles_labels()
     lines2, labels2 = ax4b.get_legend_handles_labels()
     ax4.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
-    
+
+if __name__ == "__main__":
+    main()
