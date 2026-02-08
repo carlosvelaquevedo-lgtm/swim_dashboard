@@ -2138,4 +2138,15 @@ def generate_plots(analyzer: SwimAnalyzer):
     
     ax4b = ax4.twinx()
     ax4b.plot(times, [m.kick_depth_proxy for m in analyzer.metrics], 
-              label="Kick Depth", color='#22c55e', linewidth=1.5, alpha=
+              label="Kick Depth", color='#22c55e', linewidth=1.5, alpha=0.7)
+    ax4b.axhspan(DEFAULT_KICK_DEPTH_GOOD[0], DEFAULT_KICK_DEPTH_GOOD[1], 
+                 color='green', alpha=0.1)   # ← added closing )
+    ax4b.set_ylabel("Depth (normalized)", color='#22c55e')
+    ax4b.tick_params(axis='y', labelcolor='#22c55e')
+    ax4.set_title("Kick Metrics")
+    
+    # Combined legend
+    lines1, labels1 = ax4.get_legend_handles_labels()
+    lines2, labels2 = ax4b.get_legend_handles_labels()
+    ax4.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
+    
