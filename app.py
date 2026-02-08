@@ -1019,6 +1019,9 @@ class VideoContextDetector:
         sky_mask = cv2.inRange(top_third, np.array([90, 20, 150]), np.array([130, 100, 255]))
         sky_ratio = np.sum(sky_mask > 0) / (top_third.shape[0] * top_third.shape[1])
         
+        # Underwater typically has uniform saturation throughout
+        # Above water has gradient (low sat top, high sat bottom where water is)
+        
         return {
             'blue_ratio': blue_ratio,
             'white_ratio': white_ratio,
@@ -1048,6 +1051,10 @@ class VideoContextDetector:
             
             # Hip width
             hip_width = abs(lm_pixel["left_hip"][0] - lm_pixel["right_hip"][0])
+            
+            # Check visibility of different body parts
+            # Upper body: shoulders, elbows, wrists
+            # Lower body: hips, knees, ankles
             
             return {
                 'shoulder_width': shoulder_width,
@@ -1155,7 +1162,7 @@ class VideoContextDetector:
         # Splash indicates surface
         if avg_splash > 500:
             above_water_score += 1
-        
+            
         # Sky detection
         if avg_sky > 0.1:
             above_water_score += 1
@@ -2140,7 +2147,7 @@ def generate_plots(analyzer: SwimAnalyzer):
     ax4b.plot(times, [m.kick_depth_proxy for m in analyzer.metrics], 
               label="Kick Depth", color='#22c55e', linewidth=1.5, alpha=0.7)
     ax4b.axhspan(DEFAULT_KICK_DEPTH_GOOD[0], DEFAULT_KICK_DEPTH_GOOD[1], 
-                 color='green', alpha=0.1)   # ← added closing )
+                 color='green', alpha=0.1)
     ax4b.set_ylabel("Depth (normalized)", color='#22c55e')
     ax4b.tick_params(axis='y', labelcolor='#22c55e')
     ax4.set_title("Kick Metrics")
@@ -2149,6 +2156,632 @@ def generate_plots(analyzer: SwimAnalyzer):
     lines1, labels1 = ax4.get_legend_handles_labels()
     lines2, labels2 = ax4b.get_legend_handles_labels()
     ax4.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
+
+    # 5. Overall Score with sub-scores
+    axs[4].plot(times, [m.score for m in analyzer.metrics], 
+                label="Overall Score", color='#22c55e', linewidth=2)
+    axs[4].plot(times, [m.alignment_score for m in analyzer.metrics], 
+                label="Alignment Score", color='#06b6d4', linewidth=1, alpha=0.7)
+    axs[4].plot(times, [m.evf_score for m in analyzer.metrics], 
+                label="EVF Score", color='#a855f7', linewidth=1, alpha=0.7)
+    axs[4].axhline(70, color='yellow', linestyle='--', alpha=0.5, label='Good threshold')
+    axs[4].set_xlabel("Time (seconds)")
+    axs[4].set_ylabel("Score")
+    axs[4].set_title("Technique Scores Over Time")
+    axs[4].legend(loc='lower right')
+    axs[4].set_ylim(0, 105)
+
+    plt.tight_layout()
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return buf
+
+# ─────────────────────────────────────────────
+# PDF REPORT - Enhanced
+# ─────────────────────────────────────────────
+
+def generate_pdf_report(summary: SessionSummary, filename: str, plot_buffer: io.BytesIO) -> io.BytesIO:
+    buffer = io.BytesIO()
+    pdf = SimpleDocTemplate(
+        buffer, 
+        pagesize=letter, 
+        topMargin=0.75*inch, 
+        bottomMargin=0.5*inch,
+        leftMargin=0.75*inch,
+        rightMargin=0.75*inch
+    )
+    styles = getSampleStyleSheet()
+    
+    # Custom styles with proper spacing
+    styles.add(ParagraphStyle(
+        name='CustomTitle', 
+        fontSize=20,  # Reduced from 24 to prevent overlap
+        textColor=colors.HexColor('#06b6d4'), 
+        spaceAfter=12,
+        spaceBefore=0,
+        alignment=1  # Center alignment
+    ))
+    styles.add(ParagraphStyle(
+        name='ReportSubtitle', 
+        fontSize=12, 
+        textColor=colors.HexColor('#64748b'), 
+        spaceAfter=20,
+        alignment=1  # Center alignment
+    ))
+    styles.add(ParagraphStyle(name='DiagnosticGood', fontSize=10, textColor=colors.HexColor('#22c55e'), leftIndent=15, spaceAfter=6))
+    styles.add(ParagraphStyle(name='DiagnosticWarn', fontSize=10, textColor=colors.HexColor('#f59e0b'), leftIndent=15, spaceAfter=6))
+    styles.add(ParagraphStyle(name='DiagnosticError', fontSize=10, textColor=colors.HexColor('#ef4444'), leftIndent=15, spaceAfter=6))
+
+    story = []
+    
+    # Title - centered and properly sized
+    story.append(Paragraph("Freestyle Swimming Technique Analysis", styles['CustomTitle']))
+    story.append(Paragraph(f"Analysis Report • {datetime.datetime.now().strftime('%B %d, %Y')}", styles['ReportSubtitle']))
+    story.append(Spacer(1, 0.15*inch))
+
+    # Session Information
+    story.append(Paragraph("Session Information", styles['Heading2']))
+    session_data = [
+        ['File', filename[:40] + '...' if len(filename) > 40 else filename],  # Truncate long filenames
+        ['Duration', f"{summary.duration_s:.1f} seconds"],
+        ['Analyzed', datetime.datetime.now().strftime("%Y-%m-%d %H:%M")],
+        ['Detection Confidence', f"{summary.avg_confidence*100:.1f}%"]
+    ]
+    t = Table(session_data, colWidths=[1.8*inch, 4.2*inch])
+    t.setStyle(TableStyle([
+        ('FONTSIZE', (0,0), (-1,-1), 10),
+        ('TEXTCOLOR', (0,0), (0,-1), colors.HexColor('#64748b')),
+        ('ALIGN', (0,0), (0,-1), 'RIGHT'),
+        ('RIGHTPADDING', (0,0), (0,-1), 12),
+    ]))
+    story.append(t)
+    story.append(Spacer(1, 0.25*inch))
+
+    # Overall Score Card
+    story.append(Paragraph("Overall Performance", styles['Heading2']))
+    score_color = colors.HexColor('#22c55e') if summary.avg_score >= 70 else colors.HexColor('#f59e0b') if summary.avg_score >= 50 else colors.HexColor('#ef4444')
+    story.append(Paragraph(f"<font size='32' color='{score_color}'><b>{summary.avg_score:.1f}/100</b></font>", styles['Normal']))
+    story.append(Spacer(1, 0.15*inch))
+
+    # Sub-Scores
+    story.append(Paragraph("Component Scores", styles['Heading3']))
+    subscore_data = [
+        ['Component', 'Score', 'Status'],
+        ['Body Alignment', f"{summary.avg_alignment_score:.1f}", get_zone_status(summary.avg_horizontal_deviation, DEFAULT_HORIZONTAL_DEV_GOOD, DEFAULT_HORIZONTAL_DEV_OK)],
+        ['EVF (Pull Phase)', f"{summary.avg_evf_score:.1f}", f"Dropped: {summary.dropped_elbow_pct:.0f}%" if summary.dropped_elbow_pct > 10 else get_zone_status(summary.avg_evf_angle, DEFAULT_EVF_ANGLE_GOOD, DEFAULT_EVF_ANGLE_OK)],
+        ['Body Roll', f"{summary.avg_body_roll:.1f}°", get_zone_status(summary.avg_body_roll, DEFAULT_ROLL_GOOD, DEFAULT_ROLL_OK)],
+        ['Kick', summary.kick_status, summary.kick_status],
+    ]
+    t = Table(subscore_data, colWidths=[2*inch, 1.3*inch, 1.7*inch])
+    t.setStyle(TableStyle([
+        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1e3a5f')),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+        ('FONTSIZE', (0,0), (-1,-1), 10),
+        ('ALIGN', (1,0), (-1,-1), 'CENTER'),
+    ]))
+    story.append(t)
+    story.append(Spacer(1, 0.25*inch))
+
+    # Performance Metrics
+    story.append(Paragraph("Performance Metrics", styles['Heading2']))
+    metrics_data = [
+        ['Metric', 'Value', 'Notes'],
+        ['Stroke Rate', f"{summary.stroke_rate:.1f} spm", 'strokes per minute'],
+        ['Total Strokes', f"{summary.total_strokes}", ''],
+        ['Breaths/min', f"{summary.breaths_per_min:.1f}", f"Left: {summary.breath_left}  Right: {summary.breath_right}"],
+        ['Breaths During Pull', f"{summary.breaths_during_pull}", 'Ideally 0'],
+        ['Dropped Elbow', f"{summary.dropped_elbow_pct:.0f}%", 'of catch frames'],
+        ['Vertical Drop', f"{summary.avg_vertical_drop:.1f}°", 'hip sink angle'],
+        ['Max Body Roll', f"{summary.max_body_roll:.1f}°", 'peak rotation'],
+        ['Avg EVF Angle', f"{summary.avg_evf_angle:.1f}°", 'lower is better'],
+        ['Kick Depth', f"{summary.avg_kick_depth:.2f}", 'relative to hip-ankle'],
+        ['Kick Symmetry', f"{summary.avg_kick_symmetry:.1f}°", 'L-R difference'],
+    ]
+    t = Table(metrics_data, colWidths=[1.8*inch, 1.2*inch, 2*inch])
+    t.setStyle(TableStyle([
+        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1e3a5f')),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+        ('FONTSIZE', (0,0), (-1,-1), 9),
+        ('ALIGN', (1,0), (1,-1), 'CENTER'),
+    ]))
+    story.append(t)
+    story.append(Spacer(1, 0.25*inch))
+
+    # Diagnostics
+    story.append(Paragraph("Coaching Insights", styles['Heading2']))
+    for diag in summary.diagnostics:
+        if diag.startswith("✅"):
+            style = styles['DiagnosticGood']
+        elif diag.startswith("⚠️"):
+            style = styles['DiagnosticError']
+        else:
+            style = styles['DiagnosticWarn']
+        story.append(Paragraph(diag, style))
+        story.append(Spacer(1, 0.1*inch))
+
+    # Best & Worst Frames
+    if summary.best_frame_bytes or summary.worst_frame_bytes:
+        story.append(Spacer(1, 0.3*inch))
+        story.append(Paragraph("Best & Worst Frames (Pull Phase)", styles['Heading2']))
+        if summary.best_frame_bytes:
+            img = RLImage(io.BytesIO(summary.best_frame_bytes))
+            img.drawWidth = 3*inch
+            img.drawHeight = 2*inch
+            story.append(Paragraph("Best Pull Frame:", styles['Normal']))
+            story.append(img)
+        if summary.worst_frame_bytes:
+            img = RLImage(io.BytesIO(summary.worst_frame_bytes))
+            img.drawWidth = 3*inch
+            img.drawHeight = 2*inch
+            story.append(Paragraph("Worst Pull Frame:", styles['Normal']))
+            story.append(img)
+
+    # Charts
+    if plot_buffer.getvalue():
+        story.append(PageBreak())
+        story.append(Paragraph("Analysis Charts", styles['Heading2']))
+        plot_buffer.seek(0)
+        img = RLImage(plot_buffer)
+        # Scale to fit page (letter is 8.5x11, with margins we have ~7x9 usable)
+        img.drawWidth = 6.5*inch
+        img.drawHeight = 8.5*inch
+        story.append(img)
+
+    pdf.build(story)
+    buffer.seek(0)
+    return buffer
+
+# ─────────────────────────────────────────────
+# CSV & ZIP - Enhanced
+# ─────────────────────────────────────────────
+
+def export_to_csv(analyzer: SwimAnalyzer):
+    if not analyzer.metrics:
+        return io.BytesIO()
+    data = {
+        'time_s': [m.time_s for m in analyzer.metrics],
+        'phase': [m.phase for m in analyzer.metrics],
+        'score': [m.score for m in analyzer.metrics],
+        'alignment_score': [m.alignment_score for m in analyzer.metrics],
+        'evf_score': [m.evf_score for m in analyzer.metrics],
+        'horizontal_deviation': [m.horizontal_deviation for m in analyzer.metrics],
+        'evf_plane_angle': [m.evf_plane_angle for m in analyzer.metrics],
+        'body_roll': [m.body_roll for m in analyzer.metrics],
+        'torso_lean': [m.torso_lean for m in analyzer.metrics],
+        'kick_symmetry': [m.kick_symmetry for m in analyzer.metrics],
+        'kick_depth': [m.kick_depth_proxy for m in analyzer.metrics],
+        'elbow_angle': [m.elbow_angle for m in analyzer.metrics],
+        'wrist_velocity_y': [m.wrist_velocity_y for m in analyzer.metrics],
+        'breath_state': [m.breath_state for m in analyzer.metrics],
+        'breathing_during_pull': [m.breathing_during_pull for m in analyzer.metrics],
+        'confidence': [m.confidence for m in analyzer.metrics],
+    }
+    df = pd.DataFrame(data)
+    buf = io.BytesIO()
+    df.to_csv(buf, index=False)
+    buf.seek(0)
+    return buf
+
+def create_results_bundle(video_path, csv_buf, pdf_buf, timestamp):
+    """Create ZIP with just video, PDF report, and CSV data"""
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        if os.path.exists(video_path):
+            with open(video_path, 'rb') as f:
+                zipf.writestr(f"annotated_video_{timestamp}.mp4", f.read())
+        zipf.writestr(f"technique_report_{timestamp}.pdf", pdf_buf.getvalue())
+        zipf.writestr(f"frame_data_{timestamp}.csv", csv_buf.getvalue())
+    zip_buf.seek(0)
+    return zip_buf
+
+# ─────────────────────────────────────────────
+# MAIN APP - Enhanced UI
+# ─────────────────────────────────────────────
+
+def main():
+    st.set_page_config(layout="wide", page_title="Freestyle Swim Analyzer Pro v2")
+    st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+
+    st.title("🏊 Freestyle Swim Technique Analyzer Pro v2")
+    st.markdown("AI-powered analysis with **enhanced biomechanical metrics**")
+
+    if not MEDIAPIPE_TASKS_AVAILABLE:
+        st.error("MediaPipe Tasks not installed. Run: pip install mediapipe>=0.10.14")
+        return
+
+    with st.sidebar:
+        st.header("⚙️ Athlete & Settings")
+        
+        # Height input with feet/inches conversion
+        st.subheader("Height")
+        height_unit = st.radio("Unit", ["cm", "ft/in"], horizontal=True, label_visibility="collapsed")
+        
+        if height_unit == "cm":
+            height = st.slider("Height (cm)", 150, 210, 170)
+        else:
+            col_ft, col_in = st.columns(2)
+            with col_ft:
+                feet = st.number_input("Feet", min_value=4, max_value=7, value=5)
+            with col_in:
+                inches = st.number_input("Inches", min_value=0, max_value=11, value=7)
+            # Convert to cm
+            height = int((feet * 12 + inches) * 2.54)
+            st.caption(f"= {height} cm")
+        
+        # Discipline selection with explanation
+        st.subheader("Discipline")
+        discipline = st.selectbox("Select discipline", ["pool", "triathlon", "open water"], label_visibility="collapsed")
+        
+        # Discipline explanations
+        discipline_info = {
+            "pool": "🏊 **Pool Swimming**: Optimized for controlled environment with walls for push-offs. Focuses on precise technique metrics, flip turn timing, and maintaining consistent stroke rate.",
+            "triathlon": "🏃 **Triathlon**: Balances efficiency with energy conservation. Slightly relaxed thresholds for body position since wetsuit buoyancy helps. Emphasizes sustainable stroke rate.",
+            "open water": "🌊 **Open Water**: Accounts for waves, currents, and sighting. More tolerant of head position variations and body roll changes needed for navigation."
+        }
+        st.info(discipline_info[discipline])
+        
+        st.divider()
+        
+        # Video Context Settings
+        st.subheader("📹 Video Settings")
+        
+        auto_detect = st.checkbox("Auto-detect camera angle & water position", value=True)
+        
+        if not auto_detect:
+            st.caption("Manual override:")
+            manual_camera = st.selectbox("Camera Angle", 
+                ["Side View", "Front View", "Top View"],
+                help="Side: See swimmer from the side. Front: Facing the swimmer. Top: Looking down from above.")
+            
+            manual_water = st.selectbox("Water Position",
+                ["Underwater", "Above Water", "Mixed/Waterline"],
+                help="Underwater: Camera below surface. Above: Camera above surface. Mixed: Waterline visible.")
+            
+            # Map to enums
+            camera_map = {"Side View": CameraView.SIDE, "Front View": CameraView.FRONT, "Top View": CameraView.TOP}
+            water_map = {"Underwater": WaterPosition.UNDERWATER, "Above Water": WaterPosition.ABOVE_WATER, "Mixed/Waterline": WaterPosition.MIXED}
+            manual_camera_view = camera_map[manual_camera]
+            manual_water_position = water_map[manual_water]
+        else:
+            manual_camera_view = None
+            manual_water_position = None
+            st.caption("The analyzer will automatically detect your video type in the first few seconds.")
+        
+        # Show what metrics are available based on view
+        with st.expander("📊 Metrics by View Type"):
+            st.markdown("""
+            **Side View + Underwater** *(Most metrics)*
+            - EVF (Early Vertical Forearm)
+            - Body alignment & vertical drop
+            - Kick depth
+            - Stroke phases
+            - Dropped elbow detection
+            
+            **Side View + Above Water**
+            - Recovery arm position
+            - Head position
+            - Breathing timing
+            
+            **Front View + Underwater**
+            - Body roll
+            - Hand entry width
+            - Kick symmetry
+            
+            **Front View + Above Water**
+            - Entry angle
+            - Breathing side
+            """)
+        
+        st.divider()
+        
+        # Detection Settings with explanations
+        st.subheader("Detection Settings")
+        
+        conf_thresh = st.slider("Confidence Threshold", 0.3, 0.7, DEFAULT_CONF_THRESHOLD, 0.05)
+        st.caption("""
+        **What it does**: Filters out frames where pose detection is uncertain.  
+        **Ideal setting**: **0.5** (default) - balances accuracy with data retention.  
+        ↑ Higher = stricter, fewer frames analyzed but more accurate.  
+        ↓ Lower = more frames but may include errors from splashing/bubbles.
+        """)
+        
+        yaw_thresh = st.slider("Breath Detection Sensitivity", 0.05, 0.3, DEFAULT_YAW_THRESHOLD, 0.01)
+        st.caption("""
+        **What it does**: Detects head rotation for breath timing analysis.  
+        **Ideal setting**: **0.15** (default) - catches most breaths without false positives.  
+        ↑ Higher = only detects very pronounced head turns.  
+        ↓ Lower = more sensitive, may count minor head movements as breaths.
+        """)
+
+    athlete = AthleteProfile(height, discipline)
+
+    uploaded = st.file_uploader("📹 Upload swimming video", type=["mp4", "mov", "avi"])
+
+    if uploaded:
+        try:
+            analyzer = SwimAnalyzer(
+                athlete, conf_thresh, yaw_thresh,
+                manual_camera_view=manual_camera_view if not auto_detect else None,
+                manual_water_position=manual_water_position if not auto_detect else None
+            )
+        except Exception as e:
+            st.error(f"Failed to initialize analyzer: {e}")
+            return
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_in:
+            tmp_in.write(uploaded.getvalue())
+            input_path = tmp_in.name
+
+        cap = cv2.VideoCapture(input_path)
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        # Write to temporary file with OpenCV
+        temp_out_path = tempfile.mktemp(suffix=".avi")
+        fourcc = cv2.VideoWriter_fourcc(*'XVID')  # Use XVID for intermediate
+        writer = cv2.VideoWriter(temp_out_path, fourcc, fps, (w, h))
+
+        progress = st.progress(0)
+        status = st.empty()
+
+        frame_idx = 0
+        try:
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret: 
+                    break
+
+                timestamp_ms = frame_idx * 33 + 1
+                real_t = frame_idx / fps
+
+                annotated, _ = analyzer.process(frame, real_t, timestamp_ms, fps)
+                writer.write(annotated)
+
+                frame_idx += 1
+                if total > 0:
+                    progress.progress(min(frame_idx / total, 1.0))
+                status.text(f"Processing frame {frame_idx}/{total}")
+
+            cap.release()
+            writer.release()
+            
+            # Re-encode to H.264 MP4 for browser compatibility
+            status.text("Encoding video for browser playback...")
+            out_path = tempfile.mktemp(suffix=".mp4")
+            
+            encoding_success = False
+            
+            # Method 1: Use MoviePy (pure Python, no ffmpeg binary required)
+            if MOVIEPY_AVAILABLE:
+                try:
+                    clip = VideoFileClip(temp_out_path)
+                    clip.write_videofile(
+                        out_path, 
+                        codec='libx264',
+                        audio=False,
+                        preset='fast',
+                        ffmpeg_params=['-pix_fmt', 'yuv420p', '-movflags', '+faststart'],
+                        logger=None  # Suppress moviepy output
+                    )
+                    clip.close()
+                    encoding_success = True
+                except Exception as e:
+                    st.warning(f"MoviePy encoding failed: {e}. Trying fallback...")
+            
+            # Method 2: Fallback to ffmpeg binary if available
+            if not encoding_success:
+                import subprocess
+                try:
+                    subprocess.run([
+                        'ffmpeg', '-y', '-i', temp_out_path,
+                        '-c:v', 'libx264',
+                        '-preset', 'fast',
+                        '-crf', '23',
+                        '-pix_fmt', 'yuv420p',
+                        '-movflags', '+faststart',
+                        out_path
+                    ], check=True, capture_output=True, timeout=120)
+                    encoding_success = True
+                except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                    pass
+            
+            # Method 3: Last resort - just use the AVI file (may not play in browser)
+            if not encoding_success:
+                import shutil
+                out_path = temp_out_path.replace('.avi', '.mp4')
+                shutil.copy(temp_out_path, out_path)
+                st.warning("⚠️ Video encoding limited - download the video for best playback")
+            
+            # Clean up temp AVI
+            try:
+                os.unlink(temp_out_path)
+            except:
+                pass
+
+            try:
+                os.unlink(input_path)
+            except:
+                pass
+
+            summary = analyzer.get_summary()
+            plot_buf = generate_plots(analyzer)
+            pdf_buf = generate_pdf_report(summary, uploaded.name, plot_buf)
+            csv_buf = export_to_csv(analyzer)
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            video_bytes = None
+            if os.path.exists(out_path):
+                with open(out_path, 'rb') as f:
+                    video_bytes = f.read()
+            
+            zip_buf = create_results_bundle(out_path, csv_buf, pdf_buf, timestamp)
+
+            analyzer.close()
+
+            try:
+                os.unlink(out_path)
+            except:
+                pass
+
+            st.success("✅ Analysis complete!")
+            
+            # Display detected video context
+            if summary.video_context:
+                ctx = summary.video_context
+                ctx_icon = "🎥" if ctx.camera_view == CameraView.SIDE else "👤" if ctx.camera_view == CameraView.FRONT else "🔝"
+                water_icon = "🌊" if ctx.water_position == WaterPosition.UNDERWATER else "☀️" if ctx.water_position == WaterPosition.ABOVE_WATER else "〰️"
+                confidence_color = "#22c55e" if ctx.confidence >= 0.7 else "#eab308" if ctx.confidence >= 0.5 else "#ef4444"
+                
+                st.markdown(f"""
+                <div style="background: rgba(30, 41, 59, 0.8); border-radius: 12px; padding: 16px; margin-bottom: 20px; border-left: 4px solid #06b6d4;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+                        <div>
+                            <span style="color: #94a3b8; font-size: 12px; text-transform: uppercase;">Detected Video Type</span>
+                            <div style="font-size: 18px; font-weight: 600; color: white; margin-top: 4px;">
+                                {ctx_icon} {ctx.camera_view.value} &nbsp;•&nbsp; {water_icon} {ctx.water_position.value}
+                            </div>
+                        </div>
+                        <div style="text-align: right;">
+                            <span style="color: #94a3b8; font-size: 12px;">Detection Confidence</span>
+                            <div style="font-size: 18px; font-weight: 600; color: {confidence_color};">{ctx.confidence*100:.0f}%</div>
+                        </div>
+                    </div>
+                    <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(100, 116, 139, 0.3);">
+                        <span style="color: #64748b; font-size: 12px;">
+                            {'📊 Full metrics available (side underwater view)' if ctx.camera_view == CameraView.SIDE and ctx.water_position == WaterPosition.UNDERWATER else 
+                             '📊 Limited metrics (best results with side underwater view)' if ctx.camera_view != CameraView.SIDE or ctx.water_position != WaterPosition.UNDERWATER else ''}
+                        </span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Show warning if not optimal view
+                if ctx.camera_view != CameraView.SIDE or ctx.water_position != WaterPosition.UNDERWATER:
+                    st.warning(f"""
+                    **Note:** Your video appears to be **{ctx.camera_view.value}** / **{ctx.water_position.value}**.
+                    
+                    For the most accurate analysis (EVF, body alignment, kick depth), use **Side View Underwater** footage.
+                    Current view provides: {', '.join(summary.available_metrics.keys()) if summary.available_metrics else 'basic metrics'}
+                    """)
+
+            # NEW: Render visual metrics component with body silhouettes
+            st.subheader("📊 Technique Breakdown")
+            metrics_for_viz = {
+                'horizontal_deviation': summary.avg_horizontal_deviation,
+                'vertical_drop': summary.avg_vertical_drop,
+                'evf_angle': summary.avg_evf_angle,
+                'dropped_elbow_pct': summary.dropped_elbow_pct,
+                'body_roll': summary.avg_body_roll,
+                'kick_depth': summary.avg_kick_depth,
+                'kick_symmetry': summary.avg_kick_symmetry,
+            }
+            render_swim_metrics_component(metrics_for_viz, height=440)
+
+            # Display score cards in columns
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                score_color = "#22c55e" if summary.avg_score >= 70 else "#eab308" if summary.avg_score >= 50 else "#ef4444"
+                score_status = "Excellent" if summary.avg_score >= 80 else "Good" if summary.avg_score >= 70 else "Fair" if summary.avg_score >= 50 else "Needs Work"
+                st.markdown(f"""
+                <div style="background: linear-gradient(135deg, rgba(6,182,212,0.2) 0%, rgba(37,99,235,0.2) 100%); border: 2px solid {score_color}; border-radius: 16px; padding: 20px; text-align: center;">
+                    <h4 style="color: #94a3b8; margin: 0 0 8px 0; font-size: 14px;">OVERALL SCORE</h4>
+                    <div style="font-size: 48px; font-weight: bold; color: {score_color};">{summary.avg_score:.1f}</div>
+                    <div style="font-size: 12px; color: {score_color}; font-weight: 600;">{score_status}</div>
+                    <div style="font-size: 11px; color: #64748b; margin-top: 8px;">🎯 Ideal: 70+ (Good) | 80+ (Excellent)</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            with col2:
+                align_color = "#22c55e" if summary.avg_vertical_drop <= 8 else "#eab308" if summary.avg_vertical_drop <= 15 else "#ef4444"
+                align_status = "Streamlined" if summary.avg_vertical_drop <= 5 else "Good" if summary.avg_vertical_drop <= 8 else "Hip Drop" if summary.avg_vertical_drop <= 15 else "Sinking"
+                st.markdown(f"""
+                <div style="background: linear-gradient(135deg, rgba(5,150,105,0.2) 0%, rgba(16,185,129,0.2) 100%); border: 2px solid {align_color}; border-radius: 16px; padding: 20px; text-align: center;">
+                    <h4 style="color: #94a3b8; margin: 0 0 8px 0; font-size: 14px;">BODY ALIGNMENT</h4>
+                    <div style="font-size: 48px; font-weight: bold; color: {align_color};">{summary.avg_vertical_drop:.1f}°</div>
+                    <div style="font-size: 12px; color: {align_color}; font-weight: 600;">{align_status}</div>
+                    <div style="font-size: 11px; color: #64748b; margin-top: 8px;">🎯 Ideal: &lt;8° (flat body position)</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            with col3:
+                evf_color = "#22c55e" if summary.dropped_elbow_pct <= 10 else "#eab308" if summary.dropped_elbow_pct <= 30 else "#ef4444"
+                evf_status = "High Elbow" if summary.dropped_elbow_pct <= 10 else "Some Drop" if summary.dropped_elbow_pct <= 30 else "Dropped Elbow"
+                st.markdown(f"""
+                <div style="background: linear-gradient(135deg, rgba(124,58,237,0.2) 0%, rgba(168,85,247,0.2) 100%); border: 2px solid {evf_color}; border-radius: 16px; padding: 20px; text-align: center;">
+                    <h4 style="color: #94a3b8; margin: 0 0 8px 0; font-size: 14px;">EVF (CATCH)</h4>
+                    <div style="font-size: 48px; font-weight: bold; color: {evf_color};">{summary.dropped_elbow_pct:.0f}%</div>
+                    <div style="font-size: 12px; color: {evf_color}; font-weight: 600;">{evf_status}</div>
+                    <div style="font-size: 11px; color: #64748b; margin-top: 8px;">🎯 Ideal: &lt;10% dropped elbow frames</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            # Metrics row
+            cols = st.columns(5)
+            cols[0].metric("Stroke Rate", f"{summary.stroke_rate:.1f} spm")
+            cols[1].metric("Breaths/min", f"{summary.breaths_per_min:.1f}")
+            cols[2].metric("Avg Body Roll", f"{summary.avg_body_roll:.1f}°")
+            cols[3].metric("Kick Status", summary.kick_status)
+            cols[4].metric("Breaths in Pull", f"{summary.breaths_during_pull}", 
+                          delta="Good" if summary.breaths_during_pull == 0 else "Reduce",
+                          delta_color="normal" if summary.breaths_during_pull == 0 else "inverse")
+
+            # Diagnostics section
+            st.subheader("🎯 Coaching Insights")
+            for diag in summary.diagnostics:
+                if diag.startswith("✅"):
+                    st.success(diag)
+                elif diag.startswith("🚨") or diag.startswith("⚠️"):
+                    st.error(diag)
+                else:
+                    st.warning(diag)
+
+            # Best/Worst frames
+            st.subheader("📸 Key Frames")
+            col1, col2 = st.columns(2)
+            with col1:
+                if summary.best_frame_bytes:
+                    st.image(summary.best_frame_bytes, caption="Best Pull Frame")
+                else:
+                    st.info("No best frame captured")
+            with col2:
+                if summary.worst_frame_bytes:
+                    st.image(summary.worst_frame_bytes, caption="Worst Pull Frame")
+                else:
+                    st.info("No worst frame captured")
+
+            # Video player - use st.video for cross-platform compatibility
+            st.subheader("🎬 Annotated Video")
+            if video_bytes:
+                # st.video works better across platforms
+                st.video(video_bytes, format="video/mp4")
+                
+                # Also provide download link for the video separately
+                st.download_button(
+                    "⬇️ Download Annotated Video",
+                    video_bytes,
+                    f"annotated_swim_{timestamp}.mp4",
+                    "video/mp4"
+                )
+
+            # Download button
+            st.download_button(
+                "📦 Download Full Results (ZIP)",
+                zip_buf,
+                f"swim_analysis_{timestamp}.zip",
+                "application/zip"
+            )
+
+        except Exception as e:
+            st.error(f"Error during processing: {str(e)}")
+            import traceback
+            st.code(traceback.format_exc())
 
 if __name__ == "__main__":
     main()
