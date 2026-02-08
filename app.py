@@ -2629,6 +2629,11 @@ def main():
             except:
                 pass
 
+            except Exception as e:
+                st.error(f"Error during video processing: {str(e)}")
+                import traceback
+                st.code(traceback.format_exc(), language="python")
+                
             st.success("✅ Analysis complete!")
             
             # Display detected video context
