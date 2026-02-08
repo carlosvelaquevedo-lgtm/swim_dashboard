@@ -2684,43 +2684,71 @@ def main():
             render_swim_metrics_component(metrics_for_viz, height=440)
 
             # Display score cards in columns
-            col1, col2, col3 = st.columns(3)
+# ─────────────────────────────────────────────
+# KEY PERFORMANCE INDICATORS - Full-width stacked cards (mobile-friendly)
+# ─────────────────────────────────────────────
+
+st.subheader("Key Performance Indicators")
+
+# Overall Score Card
+st.markdown(f"""
+<div class="metric-card score-card" style="margin-bottom: 24px; border-radius: 16px; overflow: hidden;">
+    <div style="text-align: center; padding: 28px 16px; background: linear-gradient(135deg, rgba(6,182,212,0.15) 0%, rgba(37,99,235,0.15) 100%);">
+        <div style="font-size: 15px; color: #cbd5e1; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; font-weight: 500;">
+            OVERALL SCORE
+        </div>
+        <div style="font-size: 68px; font-weight: 800; line-height: 1; color: {score_color};">
+            {summary.avg_score:.1f}
+        </div>
+        <div style="font-size: 22px; font-weight: 700; color: {score_color}; margin: 12px 0 8px;">
+            {score_status}
+        </div>
+        <div style="font-size: 14px; color: #94a3b8;">
+            🎯 Ideal: 70+ (Good) • 80+ (Excellent)
+        </div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+            # Body Alignment Card
+            st.markdown(f"""
+            <div class="metric-card alignment-card" style="margin-bottom: 24px; border-radius: 16px; overflow: hidden;">
+                <div style="text-align: center; padding: 28px 16px; background: linear-gradient(135deg, rgba(5,150,105,0.15) 0%, rgba(16,185,129,0.15) 100%);">
+                    <div style="font-size: 15px; color: #cbd5e1; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; font-weight: 500;">
+                        BODY ALIGNMENT
+                    </div>
+                    <div style="font-size: 68px; font-weight: 800; line-height: 1; color: {align_color};">
+                        {summary.avg_vertical_drop:.1f}°
+                    </div>
+                    <div style="font-size: 22px; font-weight: 700; color: {align_color}; margin: 12px 0 8px;">
+                        {align_status}
+                    </div>
+                    <div style="font-size: 14px; color: #94a3b8;">
+                        🎯 Target: < 8° (minimal hip sink)
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
             
-            with col1:
-                score_color = "#22c55e" if summary.avg_score >= 70 else "#eab308" if summary.avg_score >= 50 else "#ef4444"
-                score_status = "Excellent" if summary.avg_score >= 80 else "Good" if summary.avg_score >= 70 else "Fair" if summary.avg_score >= 50 else "Needs Work"
-                st.markdown(f"""
-                <div style="background: linear-gradient(135deg, rgba(6,182,212,0.2) 0%, rgba(37,99,235,0.2) 100%); border: 2px solid {score_color}; border-radius: 16px; padding: 20px; text-align: center;">
-                    <h4 style="color: #94a3b8; margin: 0 0 8px 0; font-size: 14px;">OVERALL SCORE</h4>
-                    <div style="font-size: 48px; font-weight: bold; color: {score_color};">{summary.avg_score:.1f}</div>
-                    <div style="font-size: 12px; color: {score_color}; font-weight: 600;">{score_status}</div>
-                    <div style="font-size: 11px; color: #64748b; margin-top: 8px;">🎯 Ideal: 70+ (Good) | 80+ (Excellent)</div>
+            # EVF Card
+            st.markdown(f"""
+            <div class="metric-card evf-card" style="margin-bottom: 32px; border-radius: 16px; overflow: hidden;">
+                <div style="text-align: center; padding: 28px 16px; background: linear-gradient(135deg, rgba(124,58,237,0.15) 0%, rgba(168,85,247,0.15) 100%);">
+                    <div style="font-size: 15px; color: #cbd5e1; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; font-weight: 500;">
+                        EARLY VERTICAL FOREARM (CATCH)
+                    </div>
+                    <div style="font-size: 68px; font-weight: 800; line-height: 1; color: {evf_color};">
+                        {summary.dropped_elbow_pct:.0f}%
+                    </div>
+                    <div style="font-size: 22px; font-weight: 700; color: {evf_color}; margin: 12px 0 8px;">
+                        {evf_status}
+                    </div>
+                    <div style="font-size: 14px; color: #94a3b8;">
+                        🎯 Target: < 10% dropped elbow frames
+                    </div>
                 </div>
-                """, unsafe_allow_html=True)
-
-            with col2:
-                align_color = "#22c55e" if summary.avg_vertical_drop <= 8 else "#eab308" if summary.avg_vertical_drop <= 15 else "#ef4444"
-                align_status = "Streamlined" if summary.avg_vertical_drop <= 5 else "Good" if summary.avg_vertical_drop <= 8 else "Hip Drop" if summary.avg_vertical_drop <= 15 else "Sinking"
-                st.markdown(f"""
-                <div style="background: linear-gradient(135deg, rgba(5,150,105,0.2) 0%, rgba(16,185,129,0.2) 100%); border: 2px solid {align_color}; border-radius: 16px; padding: 20px; text-align: center;">
-                    <h4 style="color: #94a3b8; margin: 0 0 8px 0; font-size: 14px;">BODY ALIGNMENT</h4>
-                    <div style="font-size: 48px; font-weight: bold; color: {align_color};">{summary.avg_vertical_drop:.1f}°</div>
-                    <div style="font-size: 12px; color: {align_color}; font-weight: 600;">{align_status}</div>
-                    <div style="font-size: 11px; color: #64748b; margin-top: 8px;">🎯 Ideal: &lt;8° (flat body position)</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-            with col3:
-                evf_color = "#22c55e" if summary.dropped_elbow_pct <= 10 else "#eab308" if summary.dropped_elbow_pct <= 30 else "#ef4444"
-                evf_status = "High Elbow" if summary.dropped_elbow_pct <= 10 else "Some Drop" if summary.dropped_elbow_pct <= 30 else "Dropped Elbow"
-                st.markdown(f"""
-                <div style="background: linear-gradient(135deg, rgba(124,58,237,0.2) 0%, rgba(168,85,247,0.2) 100%); border: 2px solid {evf_color}; border-radius: 16px; padding: 20px; text-align: center;">
-                    <h4 style="color: #94a3b8; margin: 0 0 8px 0; font-size: 14px;">EVF (CATCH)</h4>
-                    <div style="font-size: 48px; font-weight: bold; color: {evf_color};">{summary.dropped_elbow_pct:.0f}%</div>
-                    <div style="font-size: 12px; color: {evf_color}; font-weight: 600;">{evf_status}</div>
-                    <div style="font-size: 11px; color: #64748b; margin-top: 8px;">🎯 Ideal: &lt;10% dropped elbow frames</div>
-                </div>
-                """, unsafe_allow_html=True)
+            </div>
+            """, unsafe_allow_html=True)
 
             # Metrics row
             cols = st.columns(5)
