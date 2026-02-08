@@ -23,6 +23,13 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
 from reportlab.lib.units import inch
 
+# MoviePy for video encoding (pure Python, no ffmpeg binary needed)
+try:
+    from moviepy.editor import VideoFileClip
+    MOVIEPY_AVAILABLE = True
+except ImportError:
+    MOVIEPY_AVAILABLE = False
+
 # ─────────────────────────────────────────────
 # MEDIAPIPE TASKS API
 # ─────────────────────────────────────────────
@@ -546,6 +553,65 @@ class SwimPhase(Enum):
     PUSH = "Push"
     RECOVERY = "Recovery"
 
+class CameraView(Enum):
+    SIDE = "Side View"
+    FRONT = "Front View"
+    TOP = "Top View"
+    UNKNOWN = "Unknown"
+
+class WaterPosition(Enum):
+    UNDERWATER = "Underwater"
+    ABOVE_WATER = "Above Water"
+    MIXED = "Mixed/Waterline"
+    UNKNOWN = "Unknown"
+
+@dataclass
+class VideoContext:
+    """Detected video context for adaptive analysis"""
+    camera_view: CameraView = CameraView.UNKNOWN
+    water_position: WaterPosition = WaterPosition.UNKNOWN
+    swimming_direction: str = "left_to_right"  # or "right_to_left"
+    confidence: float = 0.0
+    detection_frames: int = 0
+    
+    # Color analysis results
+    avg_blue_ratio: float = 0.0
+    has_lane_lines: bool = False
+    has_splash: bool = False
+    
+    # Landmark visibility stats
+    upper_body_visible_pct: float = 0.0
+    lower_body_visible_pct: float = 0.0
+    
+    def get_available_metrics(self) -> List[str]:
+        """Return list of metrics available for this view"""
+        metrics = []
+        
+        if self.camera_view == CameraView.SIDE:
+            if self.water_position == WaterPosition.UNDERWATER:
+                metrics = ["evf", "body_alignment", "kick_depth", "stroke_phase", "torso_lean"]
+            else:  # Above water
+                metrics = ["recovery_arm", "breathing", "head_position", "stroke_rate"]
+        
+        elif self.camera_view == CameraView.FRONT:
+            if self.water_position == WaterPosition.UNDERWATER:
+                metrics = ["body_roll", "hand_entry_width", "kick_symmetry", "streamline"]
+            else:
+                metrics = ["entry_angle", "breathing_side", "catch_width"]
+        
+        elif self.camera_view == CameraView.TOP:
+            metrics = ["body_roll", "stroke_symmetry", "kick_width", "streamline"]
+        
+        else:
+            # Unknown - provide basic metrics
+            metrics = ["body_roll", "stroke_rate", "breathing"]
+        
+        return metrics
+    
+    def get_description(self) -> str:
+        """Get human-readable description of detected context"""
+        return f"{self.camera_view.value} • {self.water_position.value}"
+
 @dataclass
 class AthleteProfile:
     height_cm: float
@@ -607,6 +673,9 @@ class SessionSummary:
     breaths_during_pull: int = 0
     total_breaths: int = 0
     diagnostics: List[str] = field(default_factory=list)
+    # Video context
+    video_context: Optional[VideoContext] = None
+    available_metrics: Dict = field(default_factory=dict)
 
 # ─────────────────────────────────────────────
 # HELPERS - Enhanced calculations
@@ -875,6 +944,381 @@ def detect_local_minimum(arr, threshold=10):
     return arr[mid] < min(arr[:mid] + arr[mid+1:]) and (arr[mid] + threshold) <= min(arr[:mid] + arr[mid+1:])
 
 # ─────────────────────────────────────────────
+# VIDEO CONTEXT DETECTION
+# ─────────────────────────────────────────────
+
+class VideoContextDetector:
+    """Analyzes video frames to detect camera angle and water position"""
+    
+    def __init__(self):
+        self.frame_analyses = []
+        self.detection_complete = False
+        self.context = VideoContext()
+        self.video_width = 0
+        self.video_height = 0
+        
+    def analyze_frame(self, frame: np.ndarray, landmarks_pixel: Optional[Dict] = None) -> None:
+        """Analyze a single frame for context detection"""
+        if self.detection_complete:
+            return
+        
+        # Store video dimensions from first frame
+        if self.video_height == 0:
+            self.video_height, self.video_width = frame.shape[:2]
+            
+        analysis = {
+            'color': self._analyze_color(frame),
+            'landmarks': self._analyze_landmarks(landmarks_pixel) if landmarks_pixel else None,
+            'edges': self._detect_lane_lines(frame),
+            'splash': self._detect_splash(frame)
+        }
+        self.frame_analyses.append(analysis)
+        
+        # After analyzing enough frames, make determination
+        if len(self.frame_analyses) >= 30:
+            self._finalize_detection()
+    
+    def _analyze_color(self, frame: np.ndarray) -> Dict:
+        """Analyze color distribution for water detection"""
+        h, w = frame.shape[:2]
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        
+        # Blue/cyan detection
+        lower_blue = np.array([85, 50, 50])
+        upper_blue = np.array([130, 255, 255])
+        blue_mask = cv2.inRange(hsv, lower_blue, upper_blue)
+        blue_ratio = np.sum(blue_mask > 0) / (h * w)
+        
+        # White/bright detection (splash/surface indicator)
+        lower_white = np.array([0, 0, 200])
+        upper_white = np.array([180, 30, 255])
+        white_mask = cv2.inRange(hsv, lower_white, upper_white)
+        white_ratio = np.sum(white_mask > 0) / (h * w)
+        
+        # === NEW: Above-water detection via region analysis ===
+        # Split frame into thirds
+        top_third = hsv[:h//3, :]
+        bottom_third = hsv[2*h//3:, :]
+        
+        # Saturation gradient: above-water has lower saturation at top (sky/air)
+        # and higher saturation at bottom (water)
+        top_saturation = np.mean(top_third[:,:,1])
+        bottom_saturation = np.mean(bottom_third[:,:,1])
+        saturation_gradient = bottom_saturation - top_saturation  # Positive = above water pattern
+        
+        # Brightness gradient: above-water often brighter at top
+        top_brightness = np.mean(top_third[:,:,2])
+        bottom_brightness = np.mean(bottom_third[:,:,2])
+        brightness_gradient = top_brightness - bottom_brightness  # Positive = above water pattern
+        
+        # Check for reflection/glare in top region (above water indicator)
+        bright_spots_top = cv2.inRange(top_third, np.array([0, 0, 180]), np.array([180, 60, 255]))
+        bright_ratio_top = np.sum(bright_spots_top > 0) / (top_third.shape[0] * top_third.shape[1])
+        
+        # Sky detection in top region
+        sky_mask = cv2.inRange(top_third, np.array([90, 20, 150]), np.array([130, 100, 255]))
+        sky_ratio = np.sum(sky_mask > 0) / (top_third.shape[0] * top_third.shape[1])
+        
+        return {
+            'blue_ratio': blue_ratio,
+            'white_ratio': white_ratio,
+            'sky_ratio': sky_ratio,
+            'avg_brightness': np.mean(frame),
+            'saturation_gradient': saturation_gradient,
+            'brightness_gradient': brightness_gradient,
+            'bright_ratio_top': bright_ratio_top,
+            'top_saturation': top_saturation,
+            'bottom_saturation': bottom_saturation,
+        }
+    
+    def _analyze_landmarks(self, lm_pixel: Dict) -> Dict:
+        """Analyze landmark positions for camera angle detection"""
+        if not lm_pixel:
+            return None
+        
+        # Calculate distances for view detection
+        try:
+            # Shoulder width (X distance)
+            shoulder_width = abs(lm_pixel["left_shoulder"][0] - lm_pixel["right_shoulder"][0])
+            
+            # Shoulder-hip depth (Y distance in side view, minimal in front view)
+            shoulder_y = (lm_pixel["left_shoulder"][1] + lm_pixel["right_shoulder"][1]) / 2
+            hip_y = (lm_pixel["left_hip"][1] + lm_pixel["right_hip"][1]) / 2
+            torso_height = abs(hip_y - shoulder_y)
+            
+            # Hip width
+            hip_width = abs(lm_pixel["left_hip"][0] - lm_pixel["right_hip"][0])
+            
+            return {
+                'shoulder_width': shoulder_width,
+                'torso_height': torso_height,
+                'hip_width': hip_width,
+                'width_to_height_ratio': shoulder_width / (torso_height + 1),
+                'hip_to_shoulder_ratio': hip_width / (shoulder_width + 1)
+            }
+        except:
+            return None
+    
+    def _detect_lane_lines(self, frame: np.ndarray) -> bool:
+        """Detect pool lane lines (indicates underwater pool view)"""
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        edges = cv2.Canny(gray, 50, 150)
+        
+        # Look for horizontal lines (lane lines on pool bottom)
+        lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=100, 
+                                 minLineLength=100, maxLineGap=10)
+        
+        if lines is None:
+            return False
+        
+        horizontal_lines = 0
+        for line in lines:
+            x1, y1, x2, y2 = line[0]
+            angle = abs(math.atan2(y2-y1, x2-x1) * 180 / np.pi)
+            if angle < 15 or angle > 165:  # Near horizontal
+                horizontal_lines += 1
+        
+        return horizontal_lines >= 2
+    
+    def _detect_splash(self, frame: np.ndarray) -> float:
+        """Detect splash/turbulence (indicates surface/above water)"""
+        # Splash appears as high-frequency white regions
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        
+        # High contrast areas
+        laplacian = cv2.Laplacian(gray, cv2.CV_64F)
+        variance = laplacian.var()
+        
+        # White bubble detection
+        _, white_thresh = cv2.threshold(gray, 220, 255, cv2.THRESH_BINARY)
+        white_ratio = np.sum(white_thresh > 0) / (frame.shape[0] * frame.shape[1])
+        
+        return variance * white_ratio
+    
+    def _finalize_detection(self) -> None:
+        """Make final determination based on collected analyses"""
+        if not self.frame_analyses:
+            return
+        
+        # Aggregate color analysis
+        avg_blue = np.mean([a['color']['blue_ratio'] for a in self.frame_analyses])
+        avg_white = np.mean([a['color']['white_ratio'] for a in self.frame_analyses])
+        avg_sky = np.mean([a['color']['sky_ratio'] for a in self.frame_analyses])
+        has_lanes = sum([1 for a in self.frame_analyses if a['edges']]) > len(self.frame_analyses) * 0.3
+        avg_splash = np.mean([a['splash'] for a in self.frame_analyses])
+        
+        # NEW: Saturation and brightness gradients
+        avg_sat_gradient = np.mean([a['color']['saturation_gradient'] for a in self.frame_analyses])
+        avg_bright_gradient = np.mean([a['color']['brightness_gradient'] for a in self.frame_analyses])
+        avg_bright_top = np.mean([a['color']['bright_ratio_top'] for a in self.frame_analyses])
+        avg_top_sat = np.mean([a['color']['top_saturation'] for a in self.frame_analyses])
+        avg_bottom_sat = np.mean([a['color']['bottom_saturation'] for a in self.frame_analyses])
+        
+        # === IMPROVED WATER POSITION DETECTION ===
+        # Above water indicators:
+        # 1. Saturation gradient: bottom > top by significant margin (water at bottom, air at top)
+        # 2. Lower saturation in top region (sky/background vs water)
+        # 3. Bright spots in top region (reflections, sky)
+        
+        above_water_score = 0
+        underwater_score = 0
+        
+        # Check saturation gradient (most reliable for above-water)
+        if avg_sat_gradient > 20:  # Bottom much more saturated than top
+            above_water_score += 3
+        elif avg_sat_gradient > 10:
+            above_water_score += 2
+        elif avg_sat_gradient < -10:  # Top more saturated (unusual, likely underwater)
+            underwater_score += 1
+            
+        # Check top region saturation (low = air/sky, high = water)
+        if avg_top_sat < 80:  # Low saturation top = above water
+            above_water_score += 2
+        elif avg_top_sat > 100:  # High saturation throughout = underwater
+            underwater_score += 2
+            
+        # Check for bright spots in top (reflections/sky)
+        if avg_bright_top > 0.05:
+            above_water_score += 1
+            
+        # Blue ratio - high blue can be either above or below!
+        # But UNIFORM high blue suggests underwater
+        if avg_blue > 0.3:
+            if avg_sat_gradient < 15:  # Uniform blue = underwater
+                underwater_score += 2
+            # If high blue but also high gradient, it's above water looking at pool
+        
+        # Lane lines typically visible underwater
+        if has_lanes:
+            underwater_score += 1
+            
+        # Splash indicates surface
+        if avg_splash > 500:
+            above_water_score += 1
+        
+        # Sky detection
+        if avg_sky > 0.1:
+            above_water_score += 1
+        
+        # Determine final water position
+        if above_water_score > underwater_score + 1:
+            self.context.water_position = WaterPosition.ABOVE_WATER
+            water_confidence = min(0.9, 0.5 + (above_water_score - underwater_score) * 0.1)
+        elif underwater_score > above_water_score + 1:
+            self.context.water_position = WaterPosition.UNDERWATER
+            water_confidence = min(0.9, 0.5 + (underwater_score - above_water_score) * 0.1)
+        else:
+            self.context.water_position = WaterPosition.MIXED
+            water_confidence = 0.5
+        
+        # === CAMERA VIEW DETECTION ===
+        # Use multiple signals: video aspect ratio, landmark geometry, body orientation
+        
+        # Signal 1: Video aspect ratio (very reliable!)
+        # Side view swimming videos are typically very wide (3:1 to 5:1 ratio)
+        # Front view videos are more square or portrait
+        video_aspect_ratio = self.video_width / self.video_height if hasattr(self, 'video_height') and self.video_height > 0 else 1.0
+        
+        side_view_score = 0
+        front_view_score = 0
+        top_view_score = 0
+        
+        # Wide video strongly suggests side view
+        if video_aspect_ratio > 3.0:
+            side_view_score += 3
+        elif video_aspect_ratio > 2.0:
+            side_view_score += 2
+        elif video_aspect_ratio < 1.0:  # Portrait
+            front_view_score += 2
+        
+        # Signal 2: Landmark geometry (if available)
+        landmark_analyses = [a['landmarks'] for a in self.frame_analyses if a['landmarks']]
+        
+        if landmark_analyses:
+            avg_width_height = np.mean([l['width_to_height_ratio'] for l in landmark_analyses])
+            avg_hip_shoulder = np.mean([l['hip_to_shoulder_ratio'] for l in landmark_analyses])
+            
+            # For side view: shoulders appear stacked (small X diff)
+            # But torso height varies based on body angle
+            if avg_width_height < 0.5:
+                side_view_score += 2
+            elif avg_width_height > 3.0 and avg_hip_shoulder > 0.8:
+                front_view_score += 2
+            elif avg_width_height > 3.0:
+                # High ratio could be side view with horizontal body OR top view
+                # Use video aspect ratio to disambiguate
+                if video_aspect_ratio > 2.5:
+                    side_view_score += 1  # Wide video = probably side view
+                else:
+                    top_view_score += 1
+        
+        # Signal 3: Above water typically means side view (most common filming angle)
+        if self.context.water_position == WaterPosition.ABOVE_WATER:
+            side_view_score += 1  # Slight bias toward side view for above-water
+        
+        # Determine camera view
+        max_score = max(side_view_score, front_view_score, top_view_score)
+        
+        if side_view_score == max_score:
+            self.context.camera_view = CameraView.SIDE
+            view_confidence = min(0.9, 0.4 + side_view_score * 0.1)
+        elif front_view_score == max_score:
+            self.context.camera_view = CameraView.FRONT
+            view_confidence = min(0.85, 0.4 + front_view_score * 0.1)
+        else:
+            self.context.camera_view = CameraView.TOP
+            view_confidence = min(0.7, 0.4 + top_view_score * 0.1)
+        
+        # Set overall confidence
+        self.context.confidence = (water_confidence + view_confidence) / 2
+        self.context.avg_blue_ratio = avg_blue
+        self.context.has_lane_lines = has_lanes
+        self.context.has_splash = avg_splash > 300
+        self.context.detection_frames = len(self.frame_analyses)
+        
+        self.detection_complete = True
+    
+    def get_context(self) -> VideoContext:
+        """Get the detected video context"""
+        if not self.detection_complete and self.frame_analyses:
+            self._finalize_detection()
+        return self.context
+    
+    def force_context(self, camera_view: CameraView, water_position: WaterPosition) -> None:
+        """Manually override detected context"""
+        self.context.camera_view = camera_view
+        self.context.water_position = water_position
+        self.context.confidence = 1.0  # Manual = 100% confidence
+        self.detection_complete = True
+
+
+def get_metrics_for_context(context: VideoContext) -> Dict:
+    """Return metric configurations based on video context"""
+    
+    base_metrics = {
+        'stroke_rate': True,
+        'breathing': True,
+    }
+    
+    if context.camera_view == CameraView.SIDE:
+        if context.water_position == WaterPosition.UNDERWATER:
+            return {
+                **base_metrics,
+                'evf': True,
+                'body_alignment': True,
+                'vertical_drop': True,
+                'kick_depth': True,
+                'stroke_phase': True,
+                'torso_lean': True,
+                'dropped_elbow': True,
+                # Not available in this view
+                'body_roll': False,  # Need front view for accurate roll
+                'hand_entry_width': False,
+            }
+        else:  # Above water
+            return {
+                **base_metrics,
+                'recovery_arm': True,
+                'head_position': True,
+                'breathing_timing': True,
+                # Limited underwater metrics
+                'evf': False,
+                'body_alignment': False,
+                'kick_depth': False,
+            }
+    
+    elif context.camera_view == CameraView.FRONT:
+        if context.water_position == WaterPosition.UNDERWATER:
+            return {
+                **base_metrics,
+                'body_roll': True,
+                'hand_entry_width': True,
+                'kick_symmetry': True,
+                'streamline': True,
+                # Not available in front view
+                'evf': False,
+                'body_alignment': False,
+            }
+        else:
+            return {
+                **base_metrics,
+                'entry_angle': True,
+                'breathing_side': True,
+                'catch_width': True,
+            }
+    
+    elif context.camera_view == CameraView.TOP:
+        return {
+            **base_metrics,
+            'body_roll': True,
+            'stroke_symmetry': True,
+            'kick_width': True,
+        }
+    
+    # Unknown - provide basic metrics only
+    return base_metrics
+
+# ─────────────────────────────────────────────
 # VISUAL PANELS - Enhanced
 # ─────────────────────────────────────────────
 
@@ -890,10 +1334,11 @@ def draw_simplified_silhouette(frame, x, y, color=(180,180,180), th=3):
 def draw_technique_panel_enhanced(frame, origin_x, title, metrics_dict, phase, is_ideal=False, breath_side='N'):
     """
     Enhanced technique panel with separate alignment and EVF indicators
+    (Silhouette removed for cleaner video output)
     """
     h, w = frame.shape[:2]
     px, py = origin_x - 160, 30
-    pw, ph = 320, 480
+    pw, ph = 320, 380  # Reduced height since silhouette removed
     
     # Semi-transparent background
     ov = frame.copy()
@@ -903,9 +1348,6 @@ def draw_technique_panel_enhanced(frame, origin_x, title, metrics_dict, phase, i
     # Title
     cv2.putText(frame, title.upper(), (px+10, py+30), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
                 (255,255,255) if not is_ideal else (200,200,255), 2)
-
-    # Silhouette
-    draw_simplified_silhouette(frame, px+160, py+200, (160,160,160) if is_ideal else (200,200,200), 2)
 
     y_offset = py + 55
     
@@ -1057,15 +1499,37 @@ def draw_overlay_zones(frame, lm_pixel, horizontal_dev, evf_angle, phase):
 # ─────────────────────────────────────────────
 
 class SwimAnalyzer:
-    MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/1/pose_landmarker_heavy.task"
-    MODEL_FILENAME = "pose_landmarker_heavy.task"
+    # Use LITE model for faster downloads and sufficient accuracy for swimming analysis
+    # Heavy model: ~120MB, Lite model: ~8MB
+    MODEL_URL_LITE = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
+    MODEL_URL_HEAVY = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/1/pose_landmarker_heavy.task"
+    MODEL_FILENAME_LITE = "pose_landmarker_lite.task"
+    MODEL_FILENAME_HEAVY = "pose_landmarker_heavy.task"
+    
+    # Default to lite for cloud deployment
+    USE_LITE_MODEL = True
 
-    def __init__(self, athlete: AthleteProfile, conf_thresh, yaw_thresh):
+    def __init__(self, athlete: AthleteProfile, conf_thresh, yaw_thresh, 
+                 manual_camera_view: Optional[CameraView] = None,
+                 manual_water_position: Optional[WaterPosition] = None,
+                 use_heavy_model: bool = False):
         self.athlete = athlete
         self.conf_thresh = conf_thresh
         self.yaw_thresh = yaw_thresh
+        self.use_heavy_model = use_heavy_model
 
         self.landmarker = self._init_landmarker()
+        
+        # Video context detection
+        self.context_detector = VideoContextDetector()
+        self.video_context = VideoContext()
+        self.available_metrics = {}
+        
+        # Manual override if provided
+        if manual_camera_view and manual_water_position:
+            self.context_detector.force_context(manual_camera_view, manual_water_position)
+            self.video_context = self.context_detector.get_context()
+            self.available_metrics = get_metrics_for_context(self.video_context)
 
         self.metrics: List[FrameMetrics] = []
         self.stroke_times = []
@@ -1094,19 +1558,40 @@ class SwimAnalyzer:
         # Breathing during pull tracking
         self.breaths_during_pull = 0
         
-        # Dropped elbow tracking
+        # Dropped elbow tracking (only during Pull phase for catch analysis)
         self.dropped_elbow_frames = 0
         self.pull_phase_frames = 0
+
+    @st.cache_resource
+    @staticmethod
+    def _download_model(model_url: str, model_path: str, model_size: str):
+        """Download model with caching to avoid repeated downloads"""
+        if not os.path.exists(model_path):
+            st.info(f"⏳ First run: Downloading MediaPipe Pose model ({model_size})...")
+            try:
+                urllib.request.urlretrieve(model_url, model_path)
+                st.success("✅ Model downloaded successfully!")
+            except Exception as e:
+                st.error(f"Failed to download model: {e}")
+                raise
+        return model_path
 
     def _init_landmarker(self):
         if not MEDIAPIPE_TASKS_AVAILABLE:
             raise RuntimeError("MediaPipe Tasks not available")
 
-        model_path = self.MODEL_FILENAME
-
-        if not os.path.exists(model_path):
-            with st.spinner("Downloading MediaPipe Pose Heavy model (one-time ~100 MB)..."):
-                urllib.request.urlretrieve(self.MODEL_URL, model_path)
+        # Choose model based on setting
+        if self.use_heavy_model:
+            model_url = self.MODEL_URL_HEAVY
+            model_filename = self.MODEL_FILENAME_HEAVY
+            model_size = "~120 MB - may take a minute"
+        else:
+            model_url = self.MODEL_URL_LITE
+            model_filename = self.MODEL_FILENAME_LITE
+            model_size = "~8 MB"
+        
+        # Download with caching
+        model_path = SwimAnalyzer._download_model(model_url, model_filename, model_size)
 
         base_options = python.BaseOptions(
             model_asset_path=model_path,
@@ -1147,6 +1632,13 @@ class SwimAnalyzer:
         result = self.landmarker.detect_for_video(mp_image, timestamp_ms)
 
         if not result.pose_landmarks:
+            # Analyze frame for context detection (even without landmarks)
+            if not self.context_detector.detection_complete:
+                self.context_detector.analyze_frame(frame, None)
+                # Check if detection just completed
+                if self.context_detector.detection_complete:
+                    self.video_context = self.context_detector.get_context()
+                    self.available_metrics = get_metrics_for_context(self.video_context)
             return frame, None
 
         landmarks = result.pose_landmarks[0]
@@ -1170,25 +1662,50 @@ class SwimAnalyzer:
             vis_count += 1
 
         conf = vis_sum / vis_count if vis_count > 0 else 0.0
+        
+        # Continue context detection with landmarks
+        was_complete = self.context_detector.detection_complete
+        if not was_complete:
+            self.context_detector.analyze_frame(frame, lm_pixel)
+            
+            # Update context once detection completes
+            if self.context_detector.detection_complete:
+                self.video_context = self.context_detector.get_context()
+                self.available_metrics = get_metrics_for_context(self.video_context)
+        
         if conf < self.conf_thresh:
             return frame, None
 
-        # Flip if upside-down
+        # Flip if upside-down (hip above shoulder in image = inverted video)
+        is_inverted = False
         if "left_hip" in lm_pixel and "left_shoulder" in lm_pixel:
-            if lm_pixel["left_hip"][1] < lm_pixel["left_shoulder"][1]:
-                frame = cv2.flip(frame, -1)
+            is_inverted = lm_pixel["left_hip"][1] < lm_pixel["left_shoulder"][1]
+        
+        if is_inverted:
+            frame = cv2.flip(frame, -1)
+            try:
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
                 
                 self.last_timestamp_ms += 1
                 result = self.landmarker.detect_for_video(mp_image, self.last_timestamp_ms)
                 
-                if not result.pose_landmarks:
-                    return frame, None
-                landmarks = result.pose_landmarks[0]
-                for name, idx in zip(landmark_names, indices):
-                    lm = landmarks[idx]
-                    lm_pixel[name] = (lm.x * w, lm.y * h)
+                if result.pose_landmarks:
+                    landmarks = result.pose_landmarks[0]
+                    for name, idx in zip(landmark_names, indices):
+                        lm = landmarks[idx]
+                        lm_pixel[name] = (lm.x * w, lm.y * h)
+                # If no landmarks after flip, continue with flipped coordinates
+                # (just invert the Y coordinates of existing landmarks)
+                else:
+                    for name in lm_pixel:
+                        x, y = lm_pixel[name]
+                        lm_pixel[name] = (w - x, h - y)
+            except Exception:
+                # If re-detection fails, just use flipped coordinates
+                for name in lm_pixel:
+                    x, y = lm_pixel[name]
+                    lm_pixel[name] = (w - x, h - y)
 
         # Calculate basic metrics
         elbow = min(
@@ -1278,8 +1795,10 @@ class SwimAnalyzer:
         vertical_drop = statistics.mean(self.vertical_drop_buffer) if self.vertical_drop_buffer else vertical_drop_raw
         roll_abs = abs(roll)
         
-        # Track dropped elbow during pull phase
-        if phase in ("Pull", "Push"):
+        # Track dropped elbow ONLY during Pull phase (the catch)
+        # Dropped elbow is primarily a catch problem - during push the elbow naturally drops
+        # Also only count when elbow angle is in catch range (>100°)
+        if phase == "Pull" and elbow > 100:
             self.pull_phase_frames += 1
             if is_dropped_elbow:
                 self.dropped_elbow_frames += 1
@@ -1436,6 +1955,11 @@ class SwimAnalyzer:
     def get_summary(self):
         if not self.metrics:
             return SessionSummary(0,0,0,0,0,0,0,0,0,0,0,"No data",1.0,None,None)
+        
+        # Ensure video context is finalized
+        if not self.context_detector.detection_complete:
+            self.video_context = self.context_detector.get_context()
+            self.available_metrics = get_metrics_for_context(self.video_context)
 
         d = self.metrics[-1].time_s
         high_conf_metrics = [m for m in self.metrics if m.confidence >= DEFAULT_CONF_THRESHOLD]
@@ -1555,7 +2079,9 @@ class SwimAnalyzer:
             avg_evf_score=statistics.mean(evf_scores) if evf_scores else 100,
             breaths_during_pull=self.breaths_during_pull,
             total_breaths=self.breath_l + self.breath_r,
-            diagnostics=diagnostics
+            diagnostics=diagnostics,
+            video_context=self.video_context,
+            available_metrics=self.available_metrics
         )
 
 # ─────────────────────────────────────────────
@@ -1612,414 +2138,4 @@ def generate_plots(analyzer: SwimAnalyzer):
     
     ax4b = ax4.twinx()
     ax4b.plot(times, [m.kick_depth_proxy for m in analyzer.metrics], 
-              label="Kick Depth", color='#22c55e', linewidth=1.5, alpha=0.7)
-    ax4b.axhspan(DEFAULT_KICK_DEPTH_GOOD[0], DEFAULT_KICK_DEPTH_GOOD[1], 
-                 color='green', alpha=0.1)
-    ax4b.set_ylabel("Depth (normalized)", color='#22c55e')
-    ax4b.tick_params(axis='y', labelcolor='#22c55e')
-    ax4.set_title("Kick Metrics")
-    
-    # Combined legend
-    lines1, labels1 = ax4.get_legend_handles_labels()
-    lines2, labels2 = ax4b.get_legend_handles_labels()
-    ax4.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
-
-    # 5. Overall Score with sub-scores
-    axs[4].plot(times, [m.score for m in analyzer.metrics], 
-                label="Overall Score", color='#22c55e', linewidth=2)
-    axs[4].plot(times, [m.alignment_score for m in analyzer.metrics], 
-                label="Alignment Score", color='#06b6d4', linewidth=1, alpha=0.7)
-    axs[4].plot(times, [m.evf_score for m in analyzer.metrics], 
-                label="EVF Score", color='#a855f7', linewidth=1, alpha=0.7)
-    axs[4].axhline(70, color='yellow', linestyle='--', alpha=0.5, label='Good threshold')
-    axs[4].set_xlabel("Time (seconds)")
-    axs[4].set_ylabel("Score")
-    axs[4].set_title("Technique Scores Over Time")
-    axs[4].legend(loc='lower right')
-    axs[4].set_ylim(0, 105)
-
-    plt.tight_layout()
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    buf.seek(0)
-    return buf
-
-# ─────────────────────────────────────────────
-# PDF REPORT - Enhanced
-# ─────────────────────────────────────────────
-
-def generate_pdf_report(summary: SessionSummary, filename: str, plot_buffer: io.BytesIO) -> io.BytesIO:
-    buffer = io.BytesIO()
-    pdf = SimpleDocTemplate(buffer, pagesize=letter, topMargin=0.5*inch, bottomMargin=0.5*inch)
-    styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name='CustomTitle', fontSize=24, textColor=colors.HexColor('#06b6d4'), spaceAfter=20))
-    styles.add(ParagraphStyle(name='DiagnosticGood', fontSize=11, textColor=colors.HexColor('#22c55e'), leftIndent=20))
-    styles.add(ParagraphStyle(name='DiagnosticWarn', fontSize=11, textColor=colors.HexColor('#f59e0b'), leftIndent=20))
-    styles.add(ParagraphStyle(name='DiagnosticError', fontSize=11, textColor=colors.HexColor('#ef4444'), leftIndent=20))
-
-    story = []
-    story.append(Paragraph("Freestyle Swimming Technique Analysis Report", styles['CustomTitle']))
-    story.append(Spacer(1, 0.2*inch))
-
-    # Session Information
-    story.append(Paragraph("Session Information", styles['Heading2']))
-    session_data = [
-        ['File', filename],
-        ['Duration', f"{summary.duration_s:.1f}s"],
-        ['Date', datetime.datetime.now().strftime("%Y-%m-%d %H:%M")],
-        ['Avg Confidence', f"{summary.avg_confidence*100:.1f}%"]
-    ]
-    story.append(Table(session_data, colWidths=[2*inch, 4*inch]))
-    story.append(Spacer(1, 0.3*inch))
-
-    # Overall Score Card
-    story.append(Paragraph("Overall Performance", styles['Heading2']))
-    score_color = colors.HexColor('#22c55e') if summary.avg_score >= 70 else colors.HexColor('#f59e0b') if summary.avg_score >= 50 else colors.HexColor('#ef4444')
-    story.append(Paragraph(f"<font size='36' color='{score_color}'><b>{summary.avg_score:.1f}/100</b></font>", styles['Normal']))
-    story.append(Spacer(1, 0.2*inch))
-
-    # Sub-Scores
-    story.append(Paragraph("Component Scores", styles['Heading3']))
-    subscore_data = [
-        ['Component', 'Score', 'Status'],
-        ['Body Alignment', f"{summary.avg_alignment_score:.1f}", get_zone_status(summary.avg_horizontal_deviation, DEFAULT_HORIZONTAL_DEV_GOOD, DEFAULT_HORIZONTAL_DEV_OK)],
-        ['EVF (Pull Phase)', f"{summary.avg_evf_score:.1f}", get_zone_status(summary.avg_evf_angle, DEFAULT_EVF_ANGLE_GOOD, DEFAULT_EVF_ANGLE_OK)],
-        ['Body Roll', f"{summary.avg_body_roll:.1f}°", get_zone_status(summary.avg_body_roll, DEFAULT_ROLL_GOOD, DEFAULT_ROLL_OK)],
-        ['Kick', summary.kick_status, summary.kick_status],
-    ]
-    t = Table(subscore_data, colWidths=[2*inch, 1.5*inch, 1.5*inch])
-    t.setStyle(TableStyle([
-        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1e3a5f')),
-        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-    ]))
-    story.append(t)
-    story.append(Spacer(1, 0.3*inch))
-
-    # Performance Metrics
-    story.append(Paragraph("Performance Metrics", styles['Heading2']))
-    metrics_data = [
-        ['Metric', 'Value', 'Notes'],
-        ['Stroke Rate', f"{summary.stroke_rate:.1f} spm", 'strokes per minute'],
-        ['Total Strokes', f"{summary.total_strokes}", ''],
-        ['Breaths/min', f"{summary.breaths_per_min:.1f}", f"L:{summary.breath_left} R:{summary.breath_right}"],
-        ['Breaths During Pull', f"{summary.breaths_during_pull}", 'Should be 0 ideally'],
-        ['Max Body Roll', f"{summary.max_body_roll:.1f}°", 'peak rotation'],
-        ['Avg Horizontal Dev', f"{summary.avg_horizontal_deviation:.1f}°", 'body alignment'],
-        ['Avg EVF Angle', f"{summary.avg_evf_angle:.1f}°", 'lower is better'],
-        ['Avg Kick Depth', f"{summary.avg_kick_depth:.2f}", 'relative to hip-ankle'],
-        ['Kick Symmetry', f"{summary.avg_kick_symmetry:.1f}°", 'L-R difference'],
-    ]
-    t = Table(metrics_data, colWidths=[2*inch, 1.5*inch, 2.5*inch])
-    t.setStyle(TableStyle([
-        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1e3a5f')),
-        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-    ]))
-    story.append(t)
-    story.append(Spacer(1, 0.3*inch))
-
-    # Diagnostics
-    story.append(Paragraph("Coaching Insights", styles['Heading2']))
-    for diag in summary.diagnostics:
-        if diag.startswith("✅"):
-            style = styles['DiagnosticGood']
-        elif diag.startswith("⚠️"):
-            style = styles['DiagnosticError']
-        else:
-            style = styles['DiagnosticWarn']
-        story.append(Paragraph(diag, style))
-        story.append(Spacer(1, 0.1*inch))
-
-    # Best & Worst Frames
-    if summary.best_frame_bytes or summary.worst_frame_bytes:
-        story.append(Spacer(1, 0.3*inch))
-        story.append(Paragraph("Best & Worst Frames (Pull Phase)", styles['Heading2']))
-        if summary.best_frame_bytes:
-            img = RLImage(io.BytesIO(summary.best_frame_bytes))
-            img.drawWidth = 3*inch
-            img.drawHeight = 2*inch
-            story.append(Paragraph("Best Pull Frame:", styles['Normal']))
-            story.append(img)
-        if summary.worst_frame_bytes:
-            img = RLImage(io.BytesIO(summary.worst_frame_bytes))
-            img.drawWidth = 3*inch
-            img.drawHeight = 2*inch
-            story.append(Paragraph("Worst Pull Frame:", styles['Normal']))
-            story.append(img)
-
-    # Charts
-    if plot_buffer.getvalue():
-        story.append(PageBreak())
-        story.append(Paragraph("Analysis Charts", styles['Heading2']))
-        plot_buffer.seek(0)
-        img = RLImage(plot_buffer)
-        # Scale to fit page (letter is 8.5x11, with margins we have ~7x9 usable)
-        img.drawWidth = 6.5*inch
-        img.drawHeight = 8.5*inch
-        story.append(img)
-
-    pdf.build(story)
-    buffer.seek(0)
-    return buffer
-
-# ─────────────────────────────────────────────
-# CSV & ZIP - Enhanced
-# ─────────────────────────────────────────────
-
-def export_to_csv(analyzer: SwimAnalyzer):
-    if not analyzer.metrics:
-        return io.BytesIO()
-    data = {
-        'time_s': [m.time_s for m in analyzer.metrics],
-        'phase': [m.phase for m in analyzer.metrics],
-        'score': [m.score for m in analyzer.metrics],
-        'alignment_score': [m.alignment_score for m in analyzer.metrics],
-        'evf_score': [m.evf_score for m in analyzer.metrics],
-        'horizontal_deviation': [m.horizontal_deviation for m in analyzer.metrics],
-        'evf_plane_angle': [m.evf_plane_angle for m in analyzer.metrics],
-        'body_roll': [m.body_roll for m in analyzer.metrics],
-        'torso_lean': [m.torso_lean for m in analyzer.metrics],
-        'kick_symmetry': [m.kick_symmetry for m in analyzer.metrics],
-        'kick_depth': [m.kick_depth_proxy for m in analyzer.metrics],
-        'elbow_angle': [m.elbow_angle for m in analyzer.metrics],
-        'wrist_velocity_y': [m.wrist_velocity_y for m in analyzer.metrics],
-        'breath_state': [m.breath_state for m in analyzer.metrics],
-        'breathing_during_pull': [m.breathing_during_pull for m in analyzer.metrics],
-        'confidence': [m.confidence for m in analyzer.metrics],
-    }
-    df = pd.DataFrame(data)
-    buf = io.BytesIO()
-    df.to_csv(buf, index=False)
-    buf.seek(0)
-    return buf
-
-def create_results_bundle(video_path, csv_buf, pdf_buf, plot_buf, timestamp, analyzer):
-    zip_buf = io.BytesIO()
-    with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as zipf:
-        if os.path.exists(video_path):
-            with open(video_path, 'rb') as f:
-                zipf.writestr(f"annotated_{timestamp}.mp4", f.read())
-        zipf.writestr(f"report_{timestamp}.pdf", pdf_buf.getvalue())
-        zipf.writestr(f"charts_{timestamp}.png", plot_buf.getvalue())
-        zipf.writestr(f"data_{timestamp}.csv", csv_buf.getvalue())
-        if analyzer.best_bytes:
-            zipf.writestr(f"best_frame_{timestamp}.jpg", analyzer.best_bytes)
-        if analyzer.worst_bytes:
-            zipf.writestr(f"worst_frame_{timestamp}.jpg", analyzer.worst_bytes)
-    zip_buf.seek(0)
-    return zip_buf
-
-# ─────────────────────────────────────────────
-# MAIN APP - Enhanced UI
-# ─────────────────────────────────────────────
-
-def main():
-    st.set_page_config(layout="wide", page_title="Freestyle Swim Analyzer Pro v2")
-    st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
-
-    st.title("🏊 Freestyle Swim Technique Analyzer Pro v2")
-    st.markdown("AI-powered analysis with **enhanced biomechanical metrics**")
-
-    if not MEDIAPIPE_TASKS_AVAILABLE:
-        st.error("MediaPipe Tasks not installed. Run: pip install mediapipe>=0.10.14")
-        return
-
-    with st.sidebar:
-        st.header("⚙️ Athlete & Settings")
-        height = st.slider("Height (cm)", 150, 200, 170)
-        discipline = st.selectbox("Discipline", ["pool", "triathlon", "open water"])
-        
-        st.subheader("Detection Settings")
-        conf_thresh = st.slider("Confidence Threshold", 0.3, 0.7, DEFAULT_CONF_THRESHOLD, 0.05)
-        yaw_thresh = st.slider("Breath Detection Sensitivity", 0.05, 0.3, DEFAULT_YAW_THRESHOLD, 0.01)
-        
-        st.subheader("ℹ️ What's New in v2")
-        st.markdown("""
-        - **Horizontal Deviation**: Measures shoulder-hip-ankle alignment
-        - **True EVF Angle**: Forearm angle via plane calculation  
-        - **Enhanced Phase Detection**: Uses wrist velocity
-        - **Relative Kick Depth**: Normalized to body size
-        - **Breathing Penalty**: Detects breaths during pull phase
-        - **Separate Score Cards**: Alignment, EVF, Overall
-        - **Color-Coded Overlays**: Green/Amber/Red zones
-        - **Plain-Language Diagnostics**: Actionable coaching tips
-        """)
-
-    athlete = AthleteProfile(height, discipline)
-
-    uploaded = st.file_uploader("📹 Upload swimming video", type=["mp4", "mov", "avi"])
-
-    if uploaded:
-        try:
-            analyzer = SwimAnalyzer(athlete, conf_thresh, yaw_thresh)
-        except Exception as e:
-            st.error(f"Failed to initialize analyzer: {e}")
-            return
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_in:
-            tmp_in.write(uploaded.getvalue())
-            input_path = tmp_in.name
-
-        cap = cv2.VideoCapture(input_path)
-        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-        out_path = tempfile.mktemp(suffix=".mp4")
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        writer = cv2.VideoWriter(out_path, fourcc, fps, (w, h))
-
-        progress = st.progress(0)
-        status = st.empty()
-
-        frame_idx = 0
-        try:
-            while cap.isOpened():
-                ret, frame = cap.read()
-                if not ret: 
-                    break
-
-                timestamp_ms = frame_idx * 33 + 1
-                real_t = frame_idx / fps
-
-                annotated, _ = analyzer.process(frame, real_t, timestamp_ms, fps)
-                writer.write(annotated)
-
-                frame_idx += 1
-                if total > 0:
-                    progress.progress(min(frame_idx / total, 1.0))
-                status.text(f"Processing frame {frame_idx}/{total}")
-
-            cap.release()
-            writer.release()
-
-            try:
-                os.unlink(input_path)
-            except:
-                pass
-
-            summary = analyzer.get_summary()
-            plot_buf = generate_plots(analyzer)
-            pdf_buf = generate_pdf_report(summary, uploaded.name, plot_buf)
-            csv_buf = export_to_csv(analyzer)
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            
-            video_bytes = None
-            if os.path.exists(out_path):
-                with open(out_path, 'rb') as f:
-                    video_bytes = f.read()
-            
-            zip_buf = create_results_bundle(out_path, csv_buf, pdf_buf, plot_buf, timestamp, analyzer)
-
-            analyzer.close()
-
-            try:
-                os.unlink(out_path)
-            except:
-                pass
-
-            st.success("✅ Analysis complete!")
-
-            # NEW: Render visual metrics component with body silhouettes
-            st.subheader("📊 Technique Breakdown")
-            metrics_for_viz = {
-                'horizontal_deviation': summary.avg_horizontal_deviation,
-                'vertical_drop': summary.avg_vertical_drop,
-                'evf_angle': summary.avg_evf_angle,
-                'dropped_elbow_pct': summary.dropped_elbow_pct,
-                'body_roll': summary.avg_body_roll,
-                'kick_depth': summary.avg_kick_depth,
-                'kick_symmetry': summary.avg_kick_symmetry,
-            }
-            render_swim_metrics_component(metrics_for_viz, height=440)
-
-            # Display score cards in columns
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                score_color = "#22c55e" if summary.avg_score >= 70 else "#eab308" if summary.avg_score >= 50 else "#ef4444"
-                st.markdown(f"""
-                <div class="score-card">
-                    <h3>Overall Score</h3>
-                    <div style="font-size: 42px; font-weight: bold; color: {score_color};">{summary.avg_score:.1f}</div>
-                    <div style="font-size: 14px; opacity: 0.8;">out of 100</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-            with col2:
-                align_color = "#22c55e" if summary.avg_alignment_score >= 80 else "#eab308" if summary.avg_alignment_score >= 60 else "#ef4444"
-                st.markdown(f"""
-                <div class="alignment-card">
-                    <h3>Alignment Score</h3>
-                    <div style="font-size: 42px; font-weight: bold;">{summary.avg_alignment_score:.1f}</div>
-                    <div style="font-size: 14px; opacity: 0.8;">Deviation: {summary.avg_horizontal_deviation:.1f}°</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-            with col3:
-                evf_color = "#22c55e" if summary.avg_evf_score >= 80 else "#eab308" if summary.avg_evf_score >= 60 else "#ef4444"
-                st.markdown(f"""
-                <div class="evf-card">
-                    <h3>EVF Score</h3>
-                    <div style="font-size: 42px; font-weight: bold;">{summary.avg_evf_score:.1f}</div>
-                    <div style="font-size: 14px; opacity: 0.8;">Angle: {summary.avg_evf_angle:.1f}°</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-            # Metrics row
-            cols = st.columns(5)
-            cols[0].metric("Stroke Rate", f"{summary.stroke_rate:.1f} spm")
-            cols[1].metric("Breaths/min", f"{summary.breaths_per_min:.1f}")
-            cols[2].metric("Avg Body Roll", f"{summary.avg_body_roll:.1f}°")
-            cols[3].metric("Kick Status", summary.kick_status)
-            cols[4].metric("Breaths in Pull", f"{summary.breaths_during_pull}", 
-                          delta="Good" if summary.breaths_during_pull == 0 else "Reduce",
-                          delta_color="normal" if summary.breaths_during_pull == 0 else "inverse")
-
-            # Diagnostics section
-            st.subheader("🎯 Coaching Insights")
-            for diag in summary.diagnostics:
-                if diag.startswith("✅"):
-                    st.success(diag)
-                elif diag.startswith("⚠️"):
-                    st.error(diag)
-                else:
-                    st.warning(diag)
-
-            # Best/Worst frames
-            st.subheader("📸 Key Frames")
-            col1, col2 = st.columns(2)
-            with col1:
-                if summary.best_frame_bytes:
-                    st.image(summary.best_frame_bytes, caption="Best Pull Frame")
-                else:
-                    st.info("No best frame captured")
-            with col2:
-                if summary.worst_frame_bytes:
-                    st.image(summary.worst_frame_bytes, caption="Worst Pull Frame")
-                else:
-                    st.info("No worst frame captured")
-
-            # Video player
-            st.subheader("🎬 Annotated Video")
-            if video_bytes:
-                st.video(video_bytes)
-
-            # Download button
-            st.download_button(
-                "📦 Download Full Results (ZIP)",
-                zip_buf,
-                f"swim_analysis_{timestamp}.zip",
-                "application/zip"
-            )
-
-        except Exception as e:
-            st.error(f"Error during processing: {str(e)}")
-            import traceback
-            st.code(traceback.format_exc())
-
-if __name__ == "__main__":
-    main()
+              label="Kick Depth", color='#22c55e', linewidth=1.5, alpha=
