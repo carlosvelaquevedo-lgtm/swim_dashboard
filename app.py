@@ -2629,10 +2629,13 @@ def main():
             except:
                 pass
 
+            # ────────────────────────────────────────────────
+            # ← Add the except block here (same indentation as try:)
             except Exception as e:
                 st.error(f"Error during video processing: {str(e)}")
                 import traceback
                 st.code(traceback.format_exc(), language="python")
+            # ────────────────────────────────────────────────
                 
             st.success("✅ Analysis complete!")
             
