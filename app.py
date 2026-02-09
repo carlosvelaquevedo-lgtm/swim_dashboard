@@ -44,36 +44,94 @@ except ImportError:
     st.error("MediaPipe Tasks not installed → pip install mediapipe>=0.10.0")
 
 # ─────────────────────────────────────────────
-# CUSTOM CSS - Enhanced for new UI
+# CUSTOM CSS - Updated with responsive cards
 # ─────────────────────────────────────────────
 
 CUSTOM_CSS = """
 <style>
     .stApp { background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 50%, #0f172a 100%); }
-    .metric-card { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); border-radius: 16px; padding: 20px; border: 1px solid rgba(100, 116, 139, 0.3); margin-bottom: 16px; }
+    
+    .metric-card { 
+        background: rgba(30, 41, 59, 0.7); 
+        backdrop-filter: blur(10px); 
+        border-radius: 16px; 
+        padding: 20px; 
+        border: 1px solid rgba(100, 116, 139, 0.3); 
+        min-height: 320px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+    }
+    
     .metric-card-green { border-left: 4px solid #22c55e; background: rgba(34, 197, 94, 0.1); }
     .metric-card-red   { border-left: 4px solid #ef4444; background: rgba(239, 68, 68, 0.1); }
     .metric-card-yellow{ border-left: 4px solid #eab308; background: rgba(234, 179, 8, 0.1); }
-    .score-card { background: linear-gradient(135deg, #0891b2 0%, #2563eb 100%); border-radius: 16px; padding: 24px; color: white; margin-bottom: 24px; }
-    .alignment-card { background: linear-gradient(135deg, #059669 0%, #10b981 100%); border-radius: 16px; padding: 20px; color: white; margin-bottom: 16px; }
-    .evf-card { background: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%); border-radius: 16px; padding: 20px; color: white; margin-bottom: 16px; }
-    .diagnostic-box { background: rgba(30, 41, 59, 0.8); border-radius: 12px; padding: 16px; margin: 8px 0; border-left: 3px solid #06b6d4; }
-    .diagnostic-warning { border-left-color: #f59e0b; }
-    .diagnostic-error { border-left-color: #ef4444; }
-    .stButton > button { background: linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%); color: white; border: none; border-radius: 12px; padding: 12px 24px; font-weight: 600; transition: all 0.3s ease; }
-    .stButton > button:hover { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(6, 182, 212, 0.3); }
+    
+    .score-card { 
+        background: linear-gradient(135deg, #0891b2 0%, #2563eb 100%); 
+        border-radius: 16px; 
+        padding: 24px; 
+        color: white; 
+        margin-bottom: 24px; 
+    }
+    
+    .stButton > button { 
+        background: linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%); 
+        color: white; 
+        border: none; 
+        border-radius: 12px; 
+        padding: 12px 24px; 
+        font-weight: 600; 
+        transition: all 0.3s ease; 
+    }
+    .stButton > button:hover { 
+        transform: translateY(-2px); 
+        box-shadow: 0 10px 20px rgba(6, 182, 212, 0.3); 
+    }
+    
     h1, h2, h3 { color: #f8fafc !important; }
     p, span, label { color: #cbd5e1; }
-    .phase-badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
-    .phase-entry { background: #3b82f6; color: white; }
-    .phase-pull { background: #22c55e; color: white; }
-    .phase-push { background: #f59e0b; color: black; }
-    .phase-recovery { background: #6b7280; color: white; }
+
+    /* ── Responsive card row ── */
+    .card-row {
+        display: flex;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        gap: 16px;
+        padding: 12px 4px 20px 4px;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: thin;
+        scroll-snap-type: x mandatory;
+    }
+    
+    .card-row > div {
+        flex: 0 0 300px;
+        scroll-snap-align: start;
+    }
+    
+    @media (min-width: 900px) {
+        .card-row {
+            flex-wrap: wrap;
+            justify-content: center;
+            padding: 16px 0;
+        }
+        .card-row > div {
+            flex: 1 1 320px;
+            max-width: 360px;
+        }
+    }
+    
+    /* Improve mobile readability */
+    @media (max-width: 480px) {
+        .metric-value { font-size: 32px !important; }
+        .metric-unit { font-size: 16px !important; }
+        .silhouette-container { width: 70px; height: 100px; }
+    }
 </style>
 """
 
 # ─────────────────────────────────────────────
-# SWIM METRICS VISUALIZATION COMPONENT
+# SWIM METRICS VISUALIZATION (SVG helpers unchanged)
 # ─────────────────────────────────────────────
 
 def get_viz_zone_class(value, good_range, ok_range):
@@ -252,8 +310,8 @@ def get_kick_silhouette(depth, symmetry):
     </svg>
     '''
 
-def get_swim_metrics_html(metrics: dict) -> str:
-    """Generate complete HTML for swim metrics visualization"""
+def get_swim_metrics_cards_html(metrics: dict) -> str:
+    """Generate individual card HTML snippets (no grid wrapper anymore)"""
     
     h_dev = metrics.get('horizontal_deviation', 0)
     v_drop = metrics.get('vertical_drop', 0)
@@ -263,12 +321,11 @@ def get_swim_metrics_html(metrics: dict) -> str:
     kick_d = metrics.get('kick_depth', 0.25)
     kick_s = metrics.get('kick_symmetry', 0)
     
-    # Alignment now considers vertical drop as the primary issue
+    # Same classification logic as before
     h_class = get_viz_zone_class(v_drop, (0, 8), (0, 15))
     h_label = get_viz_zone_label(v_drop, (0, 8), (0, 15))
     h_color = get_viz_zone_color(v_drop, (0, 8), (0, 15))
     
-    # EVF class considers dropped elbow percentage
     if dropped_elbow_pct > 50:
         evf_class = "bad"
         evf_label = "🚨 DROPPED"
@@ -290,217 +347,76 @@ def get_swim_metrics_html(metrics: dict) -> str:
     kick_label = get_viz_zone_label(kick_d, (0.15, 0.35), (0.10, 0.45))
     kick_color = get_viz_zone_color(kick_d, (0.15, 0.35), (0.10, 0.45))
     
-    html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <style>
-            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-            body {{ 
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                background: transparent;
-                color: white;
-                padding: 10px;
-            }}
-            .metrics-grid {{
-                display: grid;
-                grid-template-columns: repeat(2, 1fr);
-                gap: 16px;
-            }}
-            .metric-card {{
-                background: rgba(30, 41, 59, 0.9);
-                border-radius: 16px;
-                padding: 16px;
-                border: 1px solid rgba(100, 116, 139, 0.3);
-            }}
-            .metric-card.good {{ border-left: 4px solid #22c55e; }}
-            .metric-card.ok {{ border-left: 4px solid #eab308; }}
-            .metric-card.bad {{ border-left: 4px solid #ef4444; }}
-            .metric-header {{
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                margin-bottom: 12px;
-            }}
-            .metric-title {{
-                font-size: 13px;
-                font-weight: 600;
-                color: #94a3b8;
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
-            }}
-            .metric-badge {{
-                padding: 3px 8px;
-                border-radius: 12px;
-                font-size: 10px;
-                font-weight: 600;
-            }}
-            .metric-badge.good {{ background: rgba(34, 197, 94, 0.2); color: #22c55e; }}
-            .metric-badge.ok {{ background: rgba(234, 179, 8, 0.2); color: #eab308; }}
-            .metric-badge.bad {{ background: rgba(239, 68, 68, 0.2); color: #ef4444; }}
-            .metric-content {{
-                display: flex;
-                gap: 16px;
-                align-items: center;
-            }}
-            .silhouette-container {{
-                width: 80px;
-                height: 110px;
-                flex-shrink: 0;
-            }}
-            .metric-details {{ flex: 1; }}
-            .metric-value {{
-                font-size: 28px;
-                font-weight: 700;
-                line-height: 1;
-                margin-bottom: 4px;
-            }}
-            .metric-value.good {{ color: #22c55e; }}
-            .metric-value.ok {{ color: #eab308; }}
-            .metric-value.bad {{ color: #ef4444; }}
-            .metric-unit {{
-                font-size: 14px;
-                color: #64748b;
-                font-weight: 400;
-            }}
-            .range-bar {{
-                height: 6px;
-                background: #334155;
-                border-radius: 3px;
-                margin: 12px 0 6px 0;
-                position: relative;
-                overflow: hidden;
-            }}
-            .range-zone {{
-                position: absolute;
-                height: 100%;
-                border-radius: 3px;
-            }}
-            .range-zone.ok-zone {{ background: rgba(234, 179, 8, 0.3); }}
-            .range-zone.good-zone {{ background: rgba(34, 197, 94, 0.5); }}
-            .range-indicator {{
-                position: absolute;
-                top: -3px;
-                width: 12px;
-                height: 12px;
-                border-radius: 50%;
-                transform: translateX(-50%);
-                border: 2px solid white;
-                box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-            }}
-            .range-labels {{
-                display: flex;
-                justify-content: space-between;
-                font-size: 9px;
-                color: #64748b;
-            }}
-            .range-labels .warn {{ color: #f59e0b; }}
-        </style>
-    </head>
-    <body>
-        <div class="metrics-grid">
-            <!-- Body Alignment -->
-            <div class="metric-card {h_class}">
-                <div class="metric-header">
-                    <span class="metric-title">Body Alignment</span>
-                    <span class="metric-badge {h_class}">{h_label}</span>
-                </div>
-                <div class="metric-content">
-                    <div class="silhouette-container">{get_alignment_silhouette(v_drop)}</div>
-                    <div class="metric-details">
-                        <div class="metric-value {h_class}">{v_drop:.1f}<span class="metric-unit">°</span></div>
-                        <div style="font-size: 10px; color: #64748b; margin-bottom: 6px;">Vertical drop (hip sink)</div>
-                        <div class="range-bar">
-                            <div class="range-zone ok-zone" style="left: 0%; width: 60%;"></div>
-                            <div class="range-zone good-zone" style="left: 0%; width: 32%;"></div>
-                            <div class="range-indicator" style="left: {min(100, v_drop / 25 * 100):.1f}%; background: {h_color};"></div>
-                        </div>
-                        <div class="range-labels">
-                            <span>Streamlined</span>
-                            <span class="warn">Sinking →</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- EVF -->
-            <div class="metric-card {evf_class}">
-                <div class="metric-header">
-                    <span class="metric-title">Early Vertical Forearm</span>
-                    <span class="metric-badge {evf_class}">{evf_label}</span>
-                </div>
-                <div class="metric-content">
-                    <div class="silhouette-container">{get_evf_silhouette(evf)}</div>
-                    <div class="metric-details">
-                        <div class="metric-value {evf_class}">{evf:.1f}<span class="metric-unit">°</span></div>
-                        <div style="font-size: 10px; color: {'#ef4444' if dropped_elbow_pct > 30 else '#64748b'}; margin-bottom: 6px;">
-                            {'🚨 ' if dropped_elbow_pct > 50 else ''}Dropped elbow: {dropped_elbow_pct:.0f}% of catch
-                        </div>
-                        <div class="range-bar">
-                            <div class="range-zone ok-zone" style="left: 0%; width: 66%;"></div>
-                            <div class="range-zone good-zone" style="left: 0%; width: 42%;"></div>
-                            <div class="range-indicator" style="left: {min(100, evf / 60 * 100):.1f}%; background: {evf_color};"></div>
-                        </div>
-                        <div class="range-labels">
-                            <span>High elbow</span>
-                            <span class="warn">Dropped elbow →</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Body Roll -->
-            <div class="metric-card {roll_class}">
-                <div class="metric-header">
-                    <span class="metric-title">Body Roll</span>
-                    <span class="metric-badge {roll_class}">{roll_label}</span>
-                </div>
-                <div class="metric-content">
-                    <div class="silhouette-container">{get_roll_silhouette(roll)}</div>
-                    <div class="metric-details">
-                        <div class="metric-value {roll_class}">{roll:.1f}<span class="metric-unit">°</span></div>
-                        <div class="range-bar">
-                            <div class="range-zone ok-zone" style="left: 31%; width: 50%;"></div>
-                            <div class="range-zone good-zone" style="left: 44%; width: 25%;"></div>
-                            <div class="range-indicator" style="left: {min(100, roll / 80 * 100):.1f}%; background: {roll_color};"></div>
-                        </div>
-                        <div class="range-labels">
-                            <span class="warn">← Too flat</span>
-                            <span class="warn">Over-rotation →</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Kick -->
-            <div class="metric-card {kick_class}">
-                <div class="metric-header">
-                    <span class="metric-title">Kick Depth</span>
-                    <span class="metric-badge {kick_class}">{kick_label}</span>
-                </div>
-                <div class="metric-content">
-                    <div class="silhouette-container">{get_kick_silhouette(kick_d, kick_s)}</div>
-                    <div class="metric-details">
-                        <div class="metric-value {kick_class}">{kick_d:.2f}</div>
-                        <div style="font-size: 11px; color: #64748b; margin-bottom: 8px;">Symmetry: {kick_s:.1f}°</div>
-                        <div class="range-bar">
-                            <div class="range-zone ok-zone" style="left: 17%; width: 58%;"></div>
-                            <div class="range-zone good-zone" style="left: 25%; width: 33%;"></div>
-                            <div class="range-indicator" style="left: {min(100, kick_d / 0.6 * 100):.1f}%; background: {kick_color};"></div>
-                        </div>
-                        <div class="range-labels">
-                            <span class="warn">← Shallow</span>
-                            <span class="warn">Too deep →</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
+    cards = []
+    
+    # Body Alignment Card
+    cards.append(f"""
+    <div class="metric-card {h_class}">
+        <div class="metric-header">
+            <span class="metric-title">Body Alignment</span>
+            <span class="metric-badge {h_class}">{h_label}</span>
         </div>
-    </body>
-    </html>
-    """
-    return html
+        <div class="silhouette-container">{get_alignment_silhouette(v_drop)}</div>
+        <div class="metric-value {h_class}">{v_drop:.1f}<span class="metric-unit">°</span></div>
+        <div style="font-size: 13px; color: #94a3b8;">Vertical drop (hip sink)</div>
+    </div>
+    """)
+    
+    # EVF Card
+    cards.append(f"""
+    <div class="metric-card {evf_class}">
+        <div class="metric-header">
+            <span class="metric-title">Early Vertical Forearm</span>
+            <span class="metric-badge {evf_class}">{evf_label}</span>
+        </div>
+        <div class="silhouette-container">{get_evf_silhouette(evf)}</div>
+        <div class="metric-value {evf_class}">{evf:.1f}<span class="metric-unit">°</span></div>
+        <div style="font-size: 13px; color: #94a3b8;">
+            Dropped elbow: {dropped_elbow_pct:.0f}% of catch
+        </div>
+    </div>
+    """)
+    
+    # Body Roll Card
+    cards.append(f"""
+    <div class="metric-card {roll_class}">
+        <div class="metric-header">
+            <span class="metric-title">Body Roll</span>
+            <span class="metric-badge {roll_class}">{roll_label}</span>
+        </div>
+        <div class="silhouette-container">{get_roll_silhouette(roll)}</div>
+        <div class="metric-value {roll_class}">{roll:.1f}<span class="metric-unit">°</span></div>
+        <div style="font-size: 13px; color: #94a3b8;">Optimal 35–55°</div>
+    </div>
+    """)
+    
+    # Kick Card
+    cards.append(f"""
+    <div class="metric-card {kick_class}">
+        <div class="metric-header">
+            <span class="metric-title">Kick Depth</span>
+            <span class="metric-badge {kick_class}">{kick_label}</span>
+        </div>
+        <div class="silhouette-container">{get_kick_silhouette(kick_d, kick_s)}</div>
+        <div class="metric-value {kick_class}">{kick_d:.2f}</div>
+        <div style="font-size: 13px; color: #94a3b8;">
+            Symmetry: {kick_s:.1f}°
+        </div>
+    </div>
+    """)
+    
+    return "\n".join(cards)
 
+
+def render_swim_metrics_component(metrics: dict, height: int = 420):
+    """New responsive version"""
+    cards_html = get_swim_metrics_cards_html(metrics)
+    
+    components.html(f"""
+    <div class="card-row">
+        {cards_html}
+    </div>
+    """, height=height, scrolling=True)
 def render_swim_metrics_component(metrics: dict, height: int = 420):
     """Render swim metrics visualization in Streamlit"""
     html = get_swim_metrics_html(metrics)
@@ -2629,14 +2545,6 @@ def main():
             except:
                 pass
 
-            # ────────────────────────────────────────────────
-            # ← Add the except block here (same indentation as try:)
-            except Exception as e:
-                st.error(f"Error during video processing: {str(e)}")
-                import traceback
-                st.code(traceback.format_exc(), language="python")
-            # ────────────────────────────────────────────────
-                
             st.success("✅ Analysis complete!")
             
             # Display detected video context
@@ -2689,75 +2597,17 @@ def main():
                 'kick_depth': summary.avg_kick_depth,
                 'kick_symmetry': summary.avg_kick_symmetry,
             }
-            render_swim_metrics_component(metrics_for_viz, height=440)
-
-            # Display score cards in columns
-# ─────────────────────────────────────────────
-# KEY PERFORMANCE INDICATORS - Full-width stacked cards (mobile-friendly)
-# ─────────────────────────────────────────────
-
-st.subheader("Key Performance Indicators")
-
-# Overall Score Card
-st.markdown(f"""
-<div class="metric-card score-card" style="margin-bottom: 24px; border-radius: 16px; overflow: hidden;">
-    <div style="text-align: center; padding: 28px 16px; background: linear-gradient(135deg, rgba(6,182,212,0.15) 0%, rgba(37,99,235,0.15) 100%);">
-        <div style="font-size: 15px; color: #cbd5e1; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; font-weight: 500;">
-            OVERALL SCORE
-        </div>
-        <div style="font-size: 68px; font-weight: 800; line-height: 1; color: {score_color};">
-            {summary.avg_score:.1f}
-        </div>
-        <div style="font-size: 22px; font-weight: 700; color: {score_color}; margin: 12px 0 8px;">
-            {score_status}
-        </div>
-        <div style="font-size: 14px; color: #94a3b8;">
-            🎯 Ideal: 70+ (Good) • 80+ (Excellent)
-        </div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
-
-            # Body Alignment Card
-            st.markdown(f"""
-            <div class="metric-card alignment-card" style="margin-bottom: 24px; border-radius: 16px; overflow: hidden;">
-                <div style="text-align: center; padding: 28px 16px; background: linear-gradient(135deg, rgba(5,150,105,0.15) 0%, rgba(16,185,129,0.15) 100%);">
-                    <div style="font-size: 15px; color: #cbd5e1; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; font-weight: 500;">
-                        BODY ALIGNMENT
-                    </div>
-                    <div style="font-size: 68px; font-weight: 800; line-height: 1; color: {align_color};">
-                        {summary.avg_vertical_drop:.1f}°
-                    </div>
-                    <div style="font-size: 22px; font-weight: 700; color: {align_color}; margin: 12px 0 8px;">
-                        {align_status}
-                    </div>
-                    <div style="font-size: 14px; color: #94a3b8;">
-                        🎯 Target: < 8° (minimal hip sink)
-                    </div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # EVF Card
-            st.markdown(f"""
-            <div class="metric-card evf-card" style="margin-bottom: 32px; border-radius: 16px; overflow: hidden;">
-                <div style="text-align: center; padding: 28px 16px; background: linear-gradient(135deg, rgba(124,58,237,0.15) 0%, rgba(168,85,247,0.15) 100%);">
-                    <div style="font-size: 15px; color: #cbd5e1; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; font-weight: 500;">
-                        EARLY VERTICAL FOREARM (CATCH)
-                    </div>
-                    <div style="font-size: 68px; font-weight: 800; line-height: 1; color: {evf_color};">
-                        {summary.dropped_elbow_pct:.0f}%
-                    </div>
-                    <div style="font-size: 22px; font-weight: 700; color: {evf_color}; margin: 12px 0 8px;">
-                        {evf_status}
-                    </div>
-                    <div style="font-size: 14px; color: #94a3b8;">
-                        🎯 Target: < 10% dropped elbow frames
-                    </div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
+			st.subheader("📊 Technique Breakdown")
+			metrics_for_viz = {
+				'horizontal_deviation': summary.avg_horizontal_deviation,
+				'vertical_drop': summary.avg_vertical_drop,
+				'evf_angle': summary.avg_evf_angle,
+				'dropped_elbow_pct': summary.dropped_elbow_pct,
+				'body_roll': summary.avg_body_roll,
+				'kick_depth': summary.avg_kick_depth,
+				'kick_symmetry': summary.avg_kick_symmetry,
+			}
+			render_swim_metrics_component(metrics_for_viz, height=380)   # slightly lower height is usually enough now
             # Metrics row
             cols = st.columns(5)
             cols[0].metric("Stroke Rate", f"{summary.stroke_rate:.1f} spm")
@@ -2820,4 +2670,4 @@ st.markdown(f"""
             st.code(traceback.format_exc())
 
 if __name__ == "__main__":
-    main()
+    main()]
