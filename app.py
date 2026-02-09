@@ -2622,6 +2622,8 @@ def main():
                 'kick_depth': summary.avg_kick_depth,
                 'kick_symmetry': summary.avg_kick_symmetry,
             }
+            render_swim_metrics_component(metrics_for_viz, height=400)
+            
             # Metrics row
             cols = st.columns(5)
             cols[0].metric("Stroke Rate", f"{summary.stroke_rate:.1f} spm")
