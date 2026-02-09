@@ -409,142 +409,42 @@ def get_swim_metrics_cards_html(metrics: dict) -> str:
 
 
 def render_swim_metrics_component(metrics: dict, height: int = 420):
-    """New responsive version with proper mobile scrolling"""
+    """Responsive version with embedded CSS for mobile support"""
     cards_html = get_swim_metrics_cards_html(metrics)
     
     components.html(f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <style>
-            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-            body {{ 
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                background: transparent;
-                color: white;
-                overflow-x: auto;
-                -webkit-overflow-scrolling: touch;
-            }}
-            
+    <style>
+        * {{ box-sizing: border-box; }}
+        body {{ margin: 0; padding: 0; overflow-x: auto; }}
+        .card-row {{
+            display: flex;
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            gap: 16px;
+            padding: 12px 4px 20px 4px;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: thin;
+            scroll-snap-type: x mandatory;
+        }}
+        .card-row > div {{
+            flex: 0 0 300px;
+            scroll-snap-align: start;
+        }}
+        @media (min-width: 900px) {{
             .card-row {{
-                display: flex;
-                flex-wrap: nowrap;
-                gap: 16px;
-                padding: 12px 4px 20px 4px;
-                overflow-x: auto;
-                -webkit-overflow-scrolling: touch;
-                scrollbar-width: thin;
-                scroll-snap-type: x mandatory;
-                min-height: 360px;
+                flex-wrap: wrap;
+                justify-content: center;
+                padding: 16px 0;
             }}
-            
-            .metric-card {{
-                background: rgba(30, 41, 59, 0.9);
-                border-radius: 16px;
-                padding: 20px;
-                border: 1px solid rgba(100, 116, 139, 0.3);
-                min-width: 280px;
-                flex: 0 0 280px;
-                scroll-snap-align: start;
-                display: flex;
-                flex-direction: column;
-                gap: 12px;
+            .card-row > div {{
+                flex: 1 1 320px;
+                max-width: 360px;
             }}
-            
-            .metric-card.good {{ border-left: 4px solid #22c55e; }}
-            .metric-card.ok {{ border-left: 4px solid #eab308; }}
-            .metric-card.bad {{ border-left: 4px solid #ef4444; }}
-            
-            .metric-header {{
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                margin-bottom: 8px;
-            }}
-            
-            .metric-title {{
-                font-size: 13px;
-                font-weight: 600;
-                color: #94a3b8;
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
-            }}
-            
-            .metric-badge {{
-                padding: 3px 8px;
-                border-radius: 12px;
-                font-size: 10px;
-                font-weight: 600;
-            }}
-            
-            .metric-badge.good {{ background: rgba(34, 197, 94, 0.2); color: #22c55e; }}
-            .metric-badge.ok {{ background: rgba(234, 179, 8, 0.2); color: #eab308; }}
-            .metric-badge.bad {{ background: rgba(239, 68, 68, 0.2); color: #ef4444; }}
-            
-            .silhouette-container {{
-                width: 100%;
-                max-width: 100px;
-                height: 120px;
-                margin: 0 auto;
-            }}
-            
-            .metric-value {{
-                font-size: 36px;
-                font-weight: 700;
-                text-align: center;
-                line-height: 1;
-            }}
-            
-            .metric-value.good {{ color: #22c55e; }}
-            .metric-value.ok {{ color: #eab308; }}
-            .metric-value.bad {{ color: #ef4444; }}
-            
-            .metric-unit {{
-                font-size: 18px;
-                color: #64748b;
-                font-weight: 400;
-            }}
-            
-            /* Desktop: 2x2 grid */
-            @media (min-width: 900px) {{
-                .card-row {{
-                    flex-wrap: wrap;
-                    justify-content: center;
-                    overflow-x: visible;
-                }}
-                .metric-card {{
-                    flex: 1 1 calc(50% - 16px);
-                    max-width: 400px;
-                    min-width: 320px;
-                }}
-            }}
-            
-            /* Mobile optimizations */
-            @media (max-width: 768px) {{
-                .card-row {{
-                    padding: 8px 4px 16px 4px;
-                }}
-                .metric-card {{
-                    min-width: 260px;
-                    flex: 0 0 260px;
-                }}
-                .metric-value {{
-                    font-size: 32px;
-                }}
-                .silhouette-container {{
-                    max-width: 80px;
-                    height: 100px;
-                }}
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="card-row">
-            {cards_html}
-        </div>
-    </body>
-    </html>
+        }}
+    </style>
+    <div class="card-row">
+        {cards_html}
+    </div>
     """, height=height, scrolling=False)
 
 # ─────────────────────────────────────────────
