@@ -2597,17 +2597,6 @@ def main():
                 'kick_depth': summary.avg_kick_depth,
                 'kick_symmetry': summary.avg_kick_symmetry,
             }
-			st.subheader("📊 Technique Breakdown")
-			metrics_for_viz = {
-				'horizontal_deviation': summary.avg_horizontal_deviation,
-				'vertical_drop': summary.avg_vertical_drop,
-				'evf_angle': summary.avg_evf_angle,
-				'dropped_elbow_pct': summary.dropped_elbow_pct,
-				'body_roll': summary.avg_body_roll,
-				'kick_depth': summary.avg_kick_depth,
-				'kick_symmetry': summary.avg_kick_symmetry,
-			}
-			render_swim_metrics_component(metrics_for_viz, height=380)   # slightly lower height is usually enough now
             # Metrics row
             cols = st.columns(5)
             cols[0].metric("Stroke Rate", f"{summary.stroke_rate:.1f} spm")
