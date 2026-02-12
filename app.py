@@ -646,7 +646,7 @@ def get_swim_metrics_html(metrics: dict) -> str:
 def render_swim_metrics_component(metrics: dict, height: int = 520):
     """Render swim metrics visualization in Streamlit"""
     html = get_swim_metrics_html(metrics)
-    components.html(html, height=height, scrolling=True)
+    components.html(html, height=height, scrolling=False)
 
 # ─────────────────────────────────────────────
 # CONSTANTS & DEFAULTS - Updated thresholds
