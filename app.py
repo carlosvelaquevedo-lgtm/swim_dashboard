@@ -44,94 +44,36 @@ except ImportError:
     st.error("MediaPipe Tasks not installed → pip install mediapipe>=0.10.0")
 
 # ─────────────────────────────────────────────
-# CUSTOM CSS - Updated with responsive cards
+# CUSTOM CSS - Enhanced for new UI
 # ─────────────────────────────────────────────
 
 CUSTOM_CSS = """
 <style>
     .stApp { background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 50%, #0f172a 100%); }
-    
-    .metric-card { 
-        background: rgba(30, 41, 59, 0.7); 
-        backdrop-filter: blur(10px); 
-        border-radius: 16px; 
-        padding: 20px; 
-        border: 1px solid rgba(100, 116, 139, 0.3); 
-        min-height: 320px;
-        display: flex;
-        flex-direction: column;
-        justify-content: space-between;
-    }
-    
+    .metric-card { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); border-radius: 16px; padding: 20px; border: 1px solid rgba(100, 116, 139, 0.3); margin-bottom: 16px; }
     .metric-card-green { border-left: 4px solid #22c55e; background: rgba(34, 197, 94, 0.1); }
     .metric-card-red   { border-left: 4px solid #ef4444; background: rgba(239, 68, 68, 0.1); }
     .metric-card-yellow{ border-left: 4px solid #eab308; background: rgba(234, 179, 8, 0.1); }
-    
-    .score-card { 
-        background: linear-gradient(135deg, #0891b2 0%, #2563eb 100%); 
-        border-radius: 16px; 
-        padding: 24px; 
-        color: white; 
-        margin-bottom: 24px; 
-    }
-    
-    .stButton > button { 
-        background: linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%); 
-        color: white; 
-        border: none; 
-        border-radius: 12px; 
-        padding: 12px 24px; 
-        font-weight: 600; 
-        transition: all 0.3s ease; 
-    }
-    .stButton > button:hover { 
-        transform: translateY(-2px); 
-        box-shadow: 0 10px 20px rgba(6, 182, 212, 0.3); 
-    }
-    
+    .score-card { background: linear-gradient(135deg, #0891b2 0%, #2563eb 100%); border-radius: 16px; padding: 24px; color: white; margin-bottom: 24px; }
+    .alignment-card { background: linear-gradient(135deg, #059669 0%, #10b981 100%); border-radius: 16px; padding: 20px; color: white; margin-bottom: 16px; }
+    .evf-card { background: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%); border-radius: 16px; padding: 20px; color: white; margin-bottom: 16px; }
+    .diagnostic-box { background: rgba(30, 41, 59, 0.8); border-radius: 12px; padding: 16px; margin: 8px 0; border-left: 3px solid #06b6d4; }
+    .diagnostic-warning { border-left-color: #f59e0b; }
+    .diagnostic-error { border-left-color: #ef4444; }
+    .stButton > button { background: linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%); color: white; border: none; border-radius: 12px; padding: 12px 24px; font-weight: 600; transition: all 0.3s ease; }
+    .stButton > button:hover { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(6, 182, 212, 0.3); }
     h1, h2, h3 { color: #f8fafc !important; }
     p, span, label { color: #cbd5e1; }
-
-    /* ── Responsive card row ── */
-    .card-row {
-        display: flex;
-        flex-wrap: nowrap;
-        overflow-x: auto;
-        gap: 16px;
-        padding: 12px 4px 20px 4px;
-        -webkit-overflow-scrolling: touch;
-        scrollbar-width: thin;
-        scroll-snap-type: x mandatory;
-    }
-    
-    .card-row > div {
-        flex: 0 0 300px;
-        scroll-snap-align: start;
-    }
-    
-    @media (min-width: 900px) {
-        .card-row {
-            flex-wrap: wrap;
-            justify-content: center;
-            padding: 16px 0;
-        }
-        .card-row > div {
-            flex: 1 1 320px;
-            max-width: 360px;
-        }
-    }
-    
-    /* Improve mobile readability */
-    @media (max-width: 480px) {
-        .metric-value { font-size: 32px !important; }
-        .metric-unit { font-size: 16px !important; }
-        .silhouette-container { width: 70px; height: 100px; }
-    }
+    .phase-badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+    .phase-entry { background: #3b82f6; color: white; }
+    .phase-pull { background: #22c55e; color: white; }
+    .phase-push { background: #f59e0b; color: black; }
+    .phase-recovery { background: #6b7280; color: white; }
 </style>
 """
 
 # ─────────────────────────────────────────────
-# SWIM METRICS VISUALIZATION (SVG helpers unchanged)
+# SWIM METRICS VISUALIZATION COMPONENT
 # ─────────────────────────────────────────────
 
 def get_viz_zone_class(value, good_range, ok_range):
@@ -309,9 +251,79 @@ def get_kick_silhouette(depth, symmetry):
         <text x="10" y="130" fill="#64748b" font-size="8">sym: {symmetry:.1f}°</text>
     </svg>
     '''
+def get_glide_silhouette(glide_ratio, glide_score):
+    """Generate SVG for glide visualization - shows streamlined swimmer in glide position"""
+    # Good glide: ratio 15-30%, score 70+
+    # Determine color based on glide ratio
+    if glide_ratio >= 15 and glide_ratio <= 35:
+        color = "#22c55e"  # Green - good glide
+    elif glide_ratio >= 10 or glide_ratio <= 40:
+        color = "#eab308"  # Yellow - OK
+    else:
+        color = "#ef4444"  # Red - needs work
+    
+    # Arm extension visualization (based on score)
+    arm_extension = min(40, glide_score * 0.4)  # Max 40px extension
+    
+    return f'''
+    <svg viewBox="0 0 100 140" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+            <filter id="glow5" x="-50%" y="-50%" width="200%" height="200%">
+                <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+                <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <linearGradient id="bodyGrad5" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:{color};stop-opacity:0.8" />
+                <stop offset="100%" style="stop-color:{color};stop-opacity:0.4" />
+            </linearGradient>
+            <linearGradient id="waterGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" style="stop-color:#0ea5e9;stop-opacity:0.3" />
+                <stop offset="100%" style="stop-color:#0369a1;stop-opacity:0.1" />
+            </linearGradient>
+        </defs>
+        
+        <!-- Water surface indicator -->
+        <rect x="0" y="0" width="100" height="30" fill="url(#waterGrad)"/>
+        <line x1="0" y1="30" x2="100" y2="30" stroke="#0ea5e9" stroke-width="2" opacity="0.5"/>
+        <text x="5" y="22" fill="#0ea5e9" font-size="7" opacity="0.7">surface</text>
+        
+        <!-- Streamlined body in glide position -->
+        <g filter="url(#glow5)" transform="translate(0, 20)">
+            <!-- Head -->
+            <ellipse cx="15" cy="45" rx="8" ry="6" fill="url(#bodyGrad5)"/>
+            
+            <!-- Extended lead arm (the key glide indicator) -->
+            <line x1="20" y1="42" x2="{20 + arm_extension}" y2="38" stroke="{color}" stroke-width="5" stroke-linecap="round"/>
+            <ellipse cx="{22 + arm_extension}" cy="37" rx="4" ry="2" fill="{color}" transform="rotate(-10, {22 + arm_extension}, 37)"/>
+            
+            <!-- Body/torso - streamlined -->
+            <ellipse cx="35" cy="48" rx="18" ry="8" fill="url(#bodyGrad5)"/>
+            
+            <!-- Trailing arm (recovering) -->
+            <line x1="28" y1="52" x2="18" y2="65" stroke="{color}" stroke-width="4" stroke-linecap="round" opacity="0.5"/>
+            
+            <!-- Hips -->
+            <ellipse cx="55" cy="50" rx="12" ry="7" fill="url(#bodyGrad5)"/>
+            
+            <!-- Legs - together and streamlined -->
+            <line x1="60" y1="50" x2="85" y2="52" stroke="{color}" stroke-width="8" stroke-linecap="round"/>
+            <ellipse cx="88" cy="52" rx="5" ry="3" fill="{color}"/>
+        </g>
+        
+        <!-- Glide arrows showing forward momentum -->
+        <g opacity="0.4">
+            <path d="M 70 75 L 85 75 L 82 72 M 85 75 L 82 78" stroke="{color}" stroke-width="1.5" fill="none"/>
+            <path d="M 75 82 L 90 82 L 87 79 M 90 82 L 87 85" stroke="{color}" stroke-width="1.5" fill="none"/>
+        </g>
+        
+        <!-- Metrics text -->
+        <text x="10" y="125" fill="#64748b" font-size="8">ratio: {glide_ratio:.0f}%</text>
+        <text x="55" y="125" fill="#64748b" font-size="8">score: {glide_score:.0f}</text>
+    </svg>
+    '''
 
-def get_swim_metrics_cards_html(metrics: dict) -> str:
-    """Generate individual card HTML snippets (no grid wrapper anymore)"""
+def get_swim_metrics_html(metrics: dict) -> str:
+    """Generate complete HTML for swim metrics visualization"""
     
     h_dev = metrics.get('horizontal_deviation', 0)
     v_drop = metrics.get('vertical_drop', 0)
@@ -320,12 +332,15 @@ def get_swim_metrics_cards_html(metrics: dict) -> str:
     roll = metrics.get('body_roll', 45)
     kick_d = metrics.get('kick_depth', 0.25)
     kick_s = metrics.get('kick_symmetry', 0)
+    glide_ratio = metrics.get('glide_ratio', 0)
+    glide_score = metrics.get('glide_score', 0)
     
-    # Same classification logic as before
+    # Alignment now considers vertical drop as the primary issue
     h_class = get_viz_zone_class(v_drop, (0, 8), (0, 15))
     h_label = get_viz_zone_label(v_drop, (0, 8), (0, 15))
     h_color = get_viz_zone_color(v_drop, (0, 8), (0, 15))
     
+    # EVF class considers dropped elbow percentage
     if dropped_elbow_pct > 50:
         evf_class = "bad"
         evf_label = "🚨 DROPPED"
@@ -347,105 +362,291 @@ def get_swim_metrics_cards_html(metrics: dict) -> str:
     kick_label = get_viz_zone_label(kick_d, (0.15, 0.35), (0.10, 0.45))
     kick_color = get_viz_zone_color(kick_d, (0.15, 0.35), (0.10, 0.45))
     
-    cards = []
+    # Glide classification: good = 15-35% ratio with score 70+
+    if glide_ratio >= 15 and glide_ratio <= 35 and glide_score >= 70:
+        glide_class = "good"
+        glide_label = "✓ Good"
+        glide_color = "#22c55e"
+    elif glide_ratio >= 10 and glide_ratio <= 40:
+        glide_class = "ok"
+        glide_label = "◐ OK"
+        glide_color = "#eab308"
+    else:
+        glide_class = "bad"
+        glide_label = "✗ Fix"
+        glide_color = "#ef4444"
     
-    # Body Alignment Card
-    cards.append(f"""
-    <div class="metric-card {h_class}">
-        <div class="metric-header">
-            <span class="metric-title">Body Alignment</span>
-            <span class="metric-badge {h_class}">{h_label}</span>
-        </div>
-        <div class="silhouette-container">{get_alignment_silhouette(v_drop)}</div>
-        <div class="metric-value {h_class}">{v_drop:.1f}<span class="metric-unit">°</span></div>
-        <div style="font-size: 13px; color: #94a3b8;">Vertical drop (hip sink)</div>
-    </div>
-    """)
-    
-    # EVF Card
-    cards.append(f"""
-    <div class="metric-card {evf_class}">
-        <div class="metric-header">
-            <span class="metric-title">Early Vertical Forearm</span>
-            <span class="metric-badge {evf_class}">{evf_label}</span>
-        </div>
-        <div class="silhouette-container">{get_evf_silhouette(evf)}</div>
-        <div class="metric-value {evf_class}">{evf:.1f}<span class="metric-unit">°</span></div>
-        <div style="font-size: 13px; color: #94a3b8;">
-            Dropped elbow: {dropped_elbow_pct:.0f}% of catch
-        </div>
-    </div>
-    """)
-    
-    # Body Roll Card
-    cards.append(f"""
-    <div class="metric-card {roll_class}">
-        <div class="metric-header">
-            <span class="metric-title">Body Roll</span>
-            <span class="metric-badge {roll_class}">{roll_label}</span>
-        </div>
-        <div class="silhouette-container">{get_roll_silhouette(roll)}</div>
-        <div class="metric-value {roll_class}">{roll:.1f}<span class="metric-unit">°</span></div>
-        <div style="font-size: 13px; color: #94a3b8;">Optimal 35–55°</div>
-    </div>
-    """)
-    
-    # Kick Card
-    cards.append(f"""
-    <div class="metric-card {kick_class}">
-        <div class="metric-header">
-            <span class="metric-title">Kick Depth</span>
-            <span class="metric-badge {kick_class}">{kick_label}</span>
-        </div>
-        <div class="silhouette-container">{get_kick_silhouette(kick_d, kick_s)}</div>
-        <div class="metric-value {kick_class}">{kick_d:.2f}</div>
-        <div style="font-size: 13px; color: #94a3b8;">
-            Symmetry: {kick_s:.1f}°
-        </div>
-    </div>
-    """)
-    
-    return "\n".join(cards)
-
-
-def render_swim_metrics_component(metrics: dict, height: int = 420):
-    """Responsive version with embedded CSS for mobile support"""
-    cards_html = get_swim_metrics_cards_html(metrics)
-    
-    components.html(f"""
-    <style>
-        * {{ box-sizing: border-box; }}
-        body {{ margin: 0; padding: 0; overflow-x: auto; }}
-        .card-row {{
-            display: flex;
-            flex-wrap: nowrap;
-            overflow-x: auto;
-            gap: 16px;
-            padding: 12px 4px 20px 4px;
-            -webkit-overflow-scrolling: touch;
-            scrollbar-width: thin;
-            scroll-snap-type: x mandatory;
-        }}
-        .card-row > div {{
-            flex: 0 0 300px;
-            scroll-snap-align: start;
-        }}
-        @media (min-width: 900px) {{
-            .card-row {{
-                flex-wrap: wrap;
-                justify-content: center;
-                padding: 16px 0;
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <style>
+            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+            body {{ 
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                background: transparent;
+                color: white;
+                padding: 10px;
             }}
-            .card-row > div {{
-                flex: 1 1 320px;
-                max-width: 360px;
+            .metrics-grid {{
+                display: grid;
+                grid-template-columns: repeat(2, 1fr);
+                gap: 16px;
             }}
-        }}
-    </style>
-    <div class="card-row">
-        {cards_html}
-    </div>
-    """, height=height, scrolling=False)
+            .metric-card {{
+                background: rgba(30, 41, 59, 0.9);
+                border-radius: 16px;
+                padding: 16px;
+                border: 1px solid rgba(100, 116, 139, 0.3);
+            }}
+            .metric-card.good {{ border-left: 4px solid #22c55e; }}
+            .metric-card.ok {{ border-left: 4px solid #eab308; }}
+            .metric-card.bad {{ border-left: 4px solid #ef4444; }}
+            .metric-card.wide {{
+                grid-column: span 2;
+            }}
+            .metric-header {{
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 12px;
+            }}
+            .metric-title {{
+                font-size: 13px;
+                font-weight: 600;
+                color: #94a3b8;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+            }}
+            .metric-badge {{
+                padding: 3px 8px;
+                border-radius: 12px;
+                font-size: 10px;
+                font-weight: 600;
+            }}
+            .metric-badge.good {{ background: rgba(34, 197, 94, 0.2); color: #22c55e; }}
+            .metric-badge.ok {{ background: rgba(234, 179, 8, 0.2); color: #eab308; }}
+            .metric-badge.bad {{ background: rgba(239, 68, 68, 0.2); color: #ef4444; }}
+            .metric-content {{
+                display: flex;
+                gap: 16px;
+                align-items: center;
+            }}
+            .silhouette-container {{
+                width: 80px;
+                height: 110px;
+                flex-shrink: 0;
+            }}
+            .metric-details {{ flex: 1; }}
+            .metric-value {{
+                font-size: 28px;
+                font-weight: 700;
+                line-height: 1;
+                margin-bottom: 4px;
+            }}
+            .metric-value.good {{ color: #22c55e; }}
+            .metric-value.ok {{ color: #eab308; }}
+            .metric-value.bad {{ color: #ef4444; }}
+            .metric-unit {{
+                font-size: 14px;
+                color: #64748b;
+                font-weight: 400;
+            }}
+            .range-bar {{
+                height: 6px;
+                background: #334155;
+                border-radius: 3px;
+                margin: 12px 0 6px 0;
+                position: relative;
+                overflow: hidden;
+            }}
+            .range-zone {{
+                position: absolute;
+                height: 100%;
+                border-radius: 3px;
+            }}
+            .range-zone.ok-zone {{ background: rgba(234, 179, 8, 0.3); }}
+            .range-zone.good-zone {{ background: rgba(34, 197, 94, 0.5); }}
+            .range-indicator {{
+                position: absolute;
+                top: -3px;
+                width: 12px;
+                height: 12px;
+                border-radius: 50%;
+                transform: translateX(-50%);
+                border: 2px solid white;
+                box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            }}
+            .range-labels {{
+                display: flex;
+                justify-content: space-between;
+                font-size: 9px;
+                color: #64748b;
+            }}
+            .range-labels .warn {{ color: #f59e0b; }}
+            .glide-stats {{
+                display: flex;
+                gap: 24px;
+                margin-top: 8px;
+            }}
+            .glide-stat {{
+                text-align: center;
+            }}
+            .glide-stat-value {{
+                font-size: 24px;
+                font-weight: 700;
+            }}
+            .glide-stat-label {{
+                font-size: 10px;
+                color: #64748b;
+                text-transform: uppercase;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="metrics-grid">
+            <!-- Body Alignment -->
+            <div class="metric-card {h_class}">
+                <div class="metric-header">
+                    <span class="metric-title">Body Alignment</span>
+                    <span class="metric-badge {h_class}">{h_label}</span>
+                </div>
+                <div class="metric-content">
+                    <div class="silhouette-container">{get_alignment_silhouette(v_drop)}</div>
+                    <div class="metric-details">
+                        <div class="metric-value {h_class}">{v_drop:.1f}<span class="metric-unit">°</span></div>
+                        <div style="font-size: 10px; color: #64748b; margin-bottom: 6px;">Vertical drop (hip sink)</div>
+                        <div class="range-bar">
+                            <div class="range-zone ok-zone" style="left: 0%; width: 60%;"></div>
+                            <div class="range-zone good-zone" style="left: 0%; width: 32%;"></div>
+                            <div class="range-indicator" style="left: {min(100, v_drop / 25 * 100):.1f}%; background: {h_color};"></div>
+                        </div>
+                        <div class="range-labels">
+                            <span>Streamlined</span>
+                            <span class="warn">Sinking →</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- EVF -->
+            <div class="metric-card {evf_class}">
+                <div class="metric-header">
+                    <span class="metric-title">Early Vertical Forearm</span>
+                    <span class="metric-badge {evf_class}">{evf_label}</span>
+                </div>
+                <div class="metric-content">
+                    <div class="silhouette-container">{get_evf_silhouette(evf)}</div>
+                    <div class="metric-details">
+                        <div class="metric-value {evf_class}">{evf:.1f}<span class="metric-unit">°</span></div>
+                        <div style="font-size: 10px; color: {'#ef4444' if dropped_elbow_pct > 30 else '#64748b'}; margin-bottom: 6px;">
+                            {'🚨 ' if dropped_elbow_pct > 50 else ''}Dropped elbow: {dropped_elbow_pct:.0f}% of catch
+                        </div>
+                        <div class="range-bar">
+                            <div class="range-zone ok-zone" style="left: 0%; width: 66%;"></div>
+                            <div class="range-zone good-zone" style="left: 0%; width: 42%;"></div>
+                            <div class="range-indicator" style="left: {min(100, evf / 60 * 100):.1f}%; background: {evf_color};"></div>
+                        </div>
+                        <div class="range-labels">
+                            <span>High elbow</span>
+                            <span class="warn">Dropped elbow →</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Body Roll -->
+            <div class="metric-card {roll_class}">
+                <div class="metric-header">
+                    <span class="metric-title">Body Roll</span>
+                    <span class="metric-badge {roll_class}">{roll_label}</span>
+                </div>
+                <div class="metric-content">
+                    <div class="silhouette-container">{get_roll_silhouette(roll)}</div>
+                    <div class="metric-details">
+                        <div class="metric-value {roll_class}">{roll:.1f}<span class="metric-unit">°</span></div>
+                        <div class="range-bar">
+                            <div class="range-zone ok-zone" style="left: 31%; width: 50%;"></div>
+                            <div class="range-zone good-zone" style="left: 44%; width: 25%;"></div>
+                            <div class="range-indicator" style="left: {min(100, roll / 80 * 100):.1f}%; background: {roll_color};"></div>
+                        </div>
+                        <div class="range-labels">
+                            <span class="warn">← Too flat</span>
+                            <span class="warn">Over-rotation →</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Kick -->
+            <div class="metric-card {kick_class}">
+                <div class="metric-header">
+                    <span class="metric-title">Kick Depth</span>
+                    <span class="metric-badge {kick_class}">{kick_label}</span>
+                </div>
+                <div class="metric-content">
+                    <div class="silhouette-container">{get_kick_silhouette(kick_d, kick_s)}</div>
+                    <div class="metric-details">
+                        <div class="metric-value {kick_class}">{kick_d:.2f}</div>
+                        <div style="font-size: 11px; color: #64748b; margin-bottom: 8px;">Symmetry: {kick_s:.1f}°</div>
+                        <div class="range-bar">
+                            <div class="range-zone ok-zone" style="left: 17%; width: 58%;"></div>
+                            <div class="range-zone good-zone" style="left: 25%; width: 33%;"></div>
+                            <div class="range-indicator" style="left: {min(100, kick_d / 0.6 * 100):.1f}%; background: {kick_color};"></div>
+                        </div>
+                        <div class="range-labels">
+                            <span class="warn">← Shallow</span>
+                            <span class="warn">Too deep →</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Glide - Full width card (NEW 5th CARD) -->
+            <div class="metric-card {glide_class} wide">
+                <div class="metric-header">
+                    <span class="metric-title">Glide (Distance Per Stroke)</span>
+                    <span class="metric-badge {glide_class}">{glide_label}</span>
+                </div>
+                <div class="metric-content">
+                    <div class="silhouette-container">{get_glide_silhouette(glide_ratio, glide_score)}</div>
+                    <div class="metric-details">
+                        <div class="glide-stats">
+                            <div class="glide-stat">
+                                <div class="glide-stat-value {glide_class}">{glide_ratio:.0f}<span class="metric-unit">%</span></div>
+                                <div class="glide-stat-label">Glide Ratio</div>
+                            </div>
+                            <div class="glide-stat">
+                                <div class="glide-stat-value {glide_class}">{glide_score:.0f}</div>
+                                <div class="glide-stat-label">Form Score</div>
+                            </div>
+                        </div>
+                        <div style="font-size: 10px; color: #64748b; margin: 8px 0 6px 0;">
+                            {'🎯 Good glide maximizes distance per stroke' if glide_ratio >= 15 else '⚠️ Extend lead arm longer before catching'}
+                        </div>
+                        <div class="range-bar">
+                            <div class="range-zone ok-zone" style="left: 17%; width: 50%;"></div>
+                            <div class="range-zone good-zone" style="left: 25%; width: 25%;"></div>
+                            <div class="range-indicator" style="left: {min(100, glide_ratio / 50 * 100):.1f}%; background: {glide_color};"></div>
+                        </div>
+                        <div class="range-labels">
+                            <span class="warn">← Rushing</span>
+                            <span>Optimal 15-35%</span>
+                            <span class="warn">Over-gliding →</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    return html
+
+def render_swim_metrics_component(metrics: dict, height: int = 520):
+    """Render swim metrics visualization in Streamlit"""
+    html = get_swim_metrics_html(metrics)
+    components.html(html, height=height, scrolling=True)
 
 # ─────────────────────────────────────────────
 # CONSTANTS & DEFAULTS - Updated thresholds
@@ -585,6 +786,10 @@ class FrameMetrics:
     alignment_score: float = 100.0     # Sub-score for alignment
     evf_score: float = 100.0           # Sub-score for EVF
     breathing_during_pull: bool = False
+    # Glide metrics
+    is_gliding: bool = False           # True if in glide phase
+    glide_score: float = 100.0         # Quality of glide (streamline)
+    arm_extension: float = 0.0         # How extended the lead arm is (0-1)
 
 @dataclass
 class SessionSummary:
@@ -617,6 +822,11 @@ class SessionSummary:
     # Video context
     video_context: Optional[VideoContext] = None
     available_metrics: Dict = field(default_factory=dict)
+    # Glide metrics
+    glide_ratio: float = 0.0           # Percentage of stroke cycle spent gliding
+    avg_glide_score: float = 0.0       # Average quality of glide phases
+    glide_frames: int = 0              # Number of frames in glide
+    total_analyzed_frames: int = 0     # Total frames analyzed
 
 # ─────────────────────────────────────────────
 # HELPERS - Enhanced calculations
@@ -861,6 +1071,102 @@ def detect_phase_enhanced(lm_pixel: Dict, elbow_angle: float, prev_wrist_y: Opti
     
     return phase, wrist_velocity_y, wrist_y
 
+def compute_glide_metrics(lm_pixel: Dict, phase: str, elbow_angle: float, horizontal_dev: float) -> Tuple[bool, float, float]:
+    """
+    Compute glide metrics for freestyle swimming.
+    
+    GLIDE ASSESSMENT:
+    ================
+    Glide is the brief "catch-up" or extension phase where the lead arm is fully 
+    extended forward while the other arm completes its stroke. Good glide:
+    
+    1. Maximizes distance per stroke (DPS)
+    2. Reduces energy expenditure 
+    3. Maintains streamlined position
+    4. Allows momentary rest between strokes
+    
+    DETECTION CRITERIA:
+    - Phase: Entry or early Pull (arm extended forward)
+    - Lead arm fully extended (elbow angle > 150°)
+    - Good body alignment (low horizontal deviation)
+    - Streamlined position
+    
+    QUALITY FACTORS:
+    - Arm extension: How straight is the lead arm (elbow angle)
+    - Body alignment: Is the body streamlined during glide
+    - Duration: Longer glide (within reason) = more efficient
+    
+    Returns:
+        - is_gliding: Boolean, True if currently in glide phase
+        - glide_score: 0-100, quality of the glide position
+        - arm_extension: 0-1, how extended the lead arm is
+    """
+    
+    # Get arm measurements
+    # Find the lead arm (the one that's more extended/forward)
+    left_elbow_angle = calculate_angle(
+        lm_pixel["left_shoulder"], 
+        lm_pixel["left_elbow"], 
+        lm_pixel["left_wrist"]
+    )
+    right_elbow_angle = calculate_angle(
+        lm_pixel["right_shoulder"], 
+        lm_pixel["right_elbow"], 
+        lm_pixel["right_wrist"]
+    )
+    
+    # Lead arm is the one with higher elbow angle (more extended)
+    lead_elbow_angle = max(left_elbow_angle, right_elbow_angle)
+    
+    # Calculate arm extension (0-1 scale)
+    # 180° = fully extended = 1.0
+    # 90° = bent = 0.0
+    arm_extension = max(0, min(1, (lead_elbow_angle - 90) / 90))
+    
+    # Determine if in glide phase
+    # Glide occurs during Entry phase or very early Pull when arm is extended
+    is_gliding = False
+    
+    if phase in ("Entry", "Pull"):
+        # Check if lead arm is sufficiently extended (>140°)
+        if lead_elbow_angle > 140:
+            # Check if body is reasonably streamlined
+            if horizontal_dev < 15:  # Not too much body deviation
+                is_gliding = True
+    
+    # Calculate glide quality score
+    glide_score = 0.0
+    
+    if is_gliding:
+        # Base score from arm extension (40 points max)
+        extension_score = arm_extension * 40
+        
+        # Body alignment score (40 points max)
+        # Lower deviation = higher score
+        if horizontal_dev <= 5:
+            alignment_score = 40
+        elif horizontal_dev <= 10:
+            alignment_score = 30
+        elif horizontal_dev <= 15:
+            alignment_score = 20
+        else:
+            alignment_score = 10
+        
+        # Elbow angle bonus (20 points max)
+        # 170°+ = excellent extension
+        if lead_elbow_angle >= 170:
+            angle_bonus = 20
+        elif lead_elbow_angle >= 160:
+            angle_bonus = 15
+        elif lead_elbow_angle >= 150:
+            angle_bonus = 10
+        else:
+            angle_bonus = 5
+        
+        glide_score = extension_score + alignment_score + angle_bonus
+    
+    return is_gliding, glide_score, arm_extension
+
 def get_zone_color(val, good, ok):
     """Return color based on value zone"""
     if good[0] <= val <= good[1]: 
@@ -923,6 +1229,7 @@ class VideoContextDetector:
         """Analyze color distribution for water detection"""
         h, w = frame.shape[:2]
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
         # Blue/cyan detection
         lower_blue = np.array([85, 50, 50])
@@ -936,32 +1243,96 @@ class VideoContextDetector:
         white_mask = cv2.inRange(hsv, lower_white, upper_white)
         white_ratio = np.sum(white_mask > 0) / (h * w)
         
-        # === NEW: Above-water detection via region analysis ===
-        # Split frame into thirds
+        # Split frame into thirds for regional analysis
         top_third = hsv[:h//3, :]
+        middle_third = hsv[h//3:2*h//3, :]
         bottom_third = hsv[2*h//3:, :]
         
-        # Saturation gradient: above-water has lower saturation at top (sky/air)
-        # and higher saturation at bottom (water)
+        top_gray = gray[:h//3, :]
+        bottom_gray = gray[2*h//3:, :]
+        
+        # Saturation analysis
         top_saturation = np.mean(top_third[:,:,1])
         bottom_saturation = np.mean(bottom_third[:,:,1])
-        saturation_gradient = bottom_saturation - top_saturation  # Positive = above water pattern
+        saturation_gradient = bottom_saturation - top_saturation
         
-        # Brightness gradient: above-water often brighter at top
+        # Brightness analysis
         top_brightness = np.mean(top_third[:,:,2])
         bottom_brightness = np.mean(bottom_third[:,:,2])
-        brightness_gradient = top_brightness - bottom_brightness  # Positive = above water pattern
+        brightness_gradient = top_brightness - bottom_brightness
         
-        # Check for reflection/glare in top region (above water indicator)
+        # Bright spots in top region
         bright_spots_top = cv2.inRange(top_third, np.array([0, 0, 180]), np.array([180, 60, 255]))
         bright_ratio_top = np.sum(bright_spots_top > 0) / (top_third.shape[0] * top_third.shape[1])
         
-        # Sky detection in top region
+        # Sky detection
         sky_mask = cv2.inRange(top_third, np.array([90, 20, 150]), np.array([130, 100, 255]))
         sky_ratio = np.sum(sky_mask > 0) / (top_third.shape[0] * top_third.shape[1])
         
-        # Underwater typically has uniform saturation throughout
-        # Above water has gradient (low sat top, high sat bottom where water is)
+        # === HORIZONTAL LINE DETECTION ===
+        edges = cv2.Canny(gray, 50, 150)
+        lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=80, minLineLength=w//6, maxLineGap=20)
+        horizontal_line_count = 0
+        if lines is not None:
+            for line in lines:
+                x1, y1, x2, y2 = line[0]
+                angle = abs(math.degrees(math.atan2(y2-y1, x2-x1)))
+                if angle < 15 or angle > 165:  # Near horizontal
+                    horizontal_line_count += 1
+        
+        # === TEXTURE VARIANCE ===
+        laplacian = cv2.Laplacian(gray, cv2.CV_64F)
+        texture_variance = laplacian.var()
+        
+        # === SKIN TONE DETECTION ===
+        lower_skin = np.array([0, 20, 70])
+        upper_skin = np.array([20, 150, 255])
+        skin_mask = cv2.inRange(hsv, lower_skin, upper_skin)
+        skin_ratio = np.sum(skin_mask > 0) / (h * w)
+        
+        # === COLOR VARIANCE ===
+        b, g, r = cv2.split(frame)
+        color_variance = np.std([np.mean(b), np.mean(g), np.mean(r)])
+        
+        # === NEW: UNDERWATER-SPECIFIC INDICATORS ===
+        
+        # 1. Surface ripples at TOP of frame (underwater looking up)
+        # Underwater footage shows wavy surface distortion at top
+        top_edges = cv2.Canny(top_gray, 30, 100)
+        top_edge_density = np.sum(top_edges > 0) / (top_gray.shape[0] * top_gray.shape[1])
+        
+        # 2. Pool bottom detection (darker region at bottom with lane markings)
+        # Pool bottom is typically darker and has distinct lane lines
+        bottom_edges = cv2.Canny(bottom_gray, 30, 100)
+        bottom_edge_density = np.sum(bottom_edges > 0) / (bottom_gray.shape[0] * bottom_gray.shape[1])
+        
+        # 3. Detect if bottom is darker than top (underwater: pool bottom darker)
+        # Above water: top (sky/ceiling) often darker or similar to water
+        bottom_brightness_val = np.mean(bottom_gray)
+        top_brightness_val = np.mean(top_gray)
+        bottom_darker = bottom_brightness_val < top_brightness_val - 10
+        
+        # 4. Check for uniform blue saturation (underwater indicator)
+        sat_uniformity = 1.0 - (abs(top_saturation - bottom_saturation) / max(top_saturation, bottom_saturation, 1))
+        
+        # 5. Detect vertical/diagonal lines in bottom (pool floor T-marks)
+        bottom_lines = cv2.HoughLinesP(bottom_edges, 1, np.pi/180, threshold=30, minLineLength=h//10, maxLineGap=10)
+        vertical_lines_bottom = 0
+        if bottom_lines is not None:
+            for line in bottom_lines:
+                x1, y1, x2, y2 = line[0]
+                angle = abs(math.degrees(math.atan2(y2-y1, x2-x1)))
+                if 70 < angle < 110:  # Near vertical
+                    vertical_lines_bottom += 1
+        
+        # 6. Check for wavy distortion pattern at top (water surface from below)
+        # High frequency variations in the top region indicate looking up at surface
+        top_laplacian = cv2.Laplacian(top_gray, cv2.CV_64F)
+        top_texture = top_laplacian.var()
+        
+        # 7. Lane rope appearance: from above = crisp horizontal lines
+        # From below = blurry, distorted by water
+        # Check sharpness of detected lines
         
         return {
             'blue_ratio': blue_ratio,
@@ -973,6 +1344,18 @@ class VideoContextDetector:
             'bright_ratio_top': bright_ratio_top,
             'top_saturation': top_saturation,
             'bottom_saturation': bottom_saturation,
+            # Above-water indicators
+            'horizontal_lines': horizontal_line_count,
+            'texture_variance': texture_variance,
+            'skin_ratio': skin_ratio,
+            'color_variance': color_variance,
+            # Underwater indicators
+            'top_edge_density': top_edge_density,
+            'bottom_edge_density': bottom_edge_density,
+            'bottom_darker': bottom_darker,
+            'sat_uniformity': sat_uniformity,
+            'vertical_lines_bottom': vertical_lines_bottom,
+            'top_texture': top_texture,
         }
     
     def _analyze_landmarks(self, lm_pixel: Dict) -> Dict:
@@ -1048,76 +1431,149 @@ class VideoContextDetector:
         if not self.frame_analyses:
             return
         
-        # Aggregate color analysis
+        # Aggregate all metrics
         avg_blue = np.mean([a['color']['blue_ratio'] for a in self.frame_analyses])
         avg_white = np.mean([a['color']['white_ratio'] for a in self.frame_analyses])
-        avg_sky = np.mean([a['color']['sky_ratio'] for a in self.frame_analyses])
-        has_lanes = sum([1 for a in self.frame_analyses if a['edges']]) > len(self.frame_analyses) * 0.3
+        has_pool_bottom_lanes = sum([1 for a in self.frame_analyses if a['edges']]) > len(self.frame_analyses) * 0.3
         avg_splash = np.mean([a['splash'] for a in self.frame_analyses])
         
-        # NEW: Saturation and brightness gradients
-        avg_sat_gradient = np.mean([a['color']['saturation_gradient'] for a in self.frame_analyses])
-        avg_bright_gradient = np.mean([a['color']['brightness_gradient'] for a in self.frame_analyses])
-        avg_bright_top = np.mean([a['color']['bright_ratio_top'] for a in self.frame_analyses])
+        # Regional analysis
         avg_top_sat = np.mean([a['color']['top_saturation'] for a in self.frame_analyses])
         avg_bottom_sat = np.mean([a['color']['bottom_saturation'] for a in self.frame_analyses])
+        avg_bright_gradient = np.mean([a['color']['brightness_gradient'] for a in self.frame_analyses])
         
-        # === IMPROVED WATER POSITION DETECTION ===
-        # Above water indicators:
-        # 1. Saturation gradient: bottom > top by significant margin (water at bottom, air at top)
-        # 2. Lower saturation in top region (sky/background vs water)
-        # 3. Bright spots in top region (reflections, sky)
+        # Above-water indicators
+        avg_horizontal_lines = np.mean([a['color'].get('horizontal_lines', 0) for a in self.frame_analyses])
+        avg_texture = np.mean([a['color'].get('texture_variance', 0) for a in self.frame_analyses])
+        avg_color_variance = np.mean([a['color'].get('color_variance', 0) for a in self.frame_analyses])
         
+        # Underwater indicators
+        avg_top_edge_density = np.mean([a['color'].get('top_edge_density', 0) for a in self.frame_analyses])
+        avg_bottom_edge_density = np.mean([a['color'].get('bottom_edge_density', 0) for a in self.frame_analyses])
+        bottom_darker_pct = np.mean([1 if a['color'].get('bottom_darker', False) else 0 for a in self.frame_analyses])
+        avg_sat_uniformity = np.mean([a['color'].get('sat_uniformity', 0) for a in self.frame_analyses])
+        avg_vertical_lines_bottom = np.mean([a['color'].get('vertical_lines_bottom', 0) for a in self.frame_analyses])
+        avg_top_texture = np.mean([a['color'].get('top_texture', 0) for a in self.frame_analyses])
+        
+        # === BALANCED SCORING SYSTEM ===
         above_water_score = 0
         underwater_score = 0
         
-        # Check saturation gradient (most reliable for above-water)
-        if avg_sat_gradient > 20:  # Bottom much more saturated than top
+        # ==========================================
+        # ABOVE-WATER INDICATORS
+        # ==========================================
+        
+        # 1. Many horizontal lines from floating lane ropes (seen from above)
+        # Above-water typically has 50+ crisp horizontal lines
+        if avg_horizontal_lines > 50:
+            above_water_score += 4
+        elif avg_horizontal_lines > 35:
             above_water_score += 3
-        elif avg_sat_gradient > 10:
-            above_water_score += 2
-        elif avg_sat_gradient < -10:  # Top more saturated (unusual, likely underwater)
-            underwater_score += 1
-            
-        # Check top region saturation (low = air/sky, high = water)
-        if avg_top_sat < 80:  # Low saturation top = above water
-            above_water_score += 2
-        elif avg_top_sat > 100:  # High saturation throughout = underwater
+        elif avg_horizontal_lines > 20:
+            above_water_score += 1
+        # Few horizontal lines suggests underwater
+        elif avg_horizontal_lines < 15:
             underwater_score += 2
-            
-        # Check for bright spots in top (reflections/sky)
-        if avg_bright_top > 0.05:
-            above_water_score += 1
-            
-        # Blue ratio - high blue can be either above or below!
-        # But UNIFORM high blue suggests underwater
-        if avg_blue > 0.3:
-            if avg_sat_gradient < 15:  # Uniform blue = underwater
-                underwater_score += 2
-            # If high blue but also high gradient, it's above water looking at pool
         
-        # Lane lines typically visible underwater
-        if has_lanes:
+        # 2. High overall texture (surface ripples from above)
+        if avg_texture > 90:
+            above_water_score += 3
+        elif avg_texture > 70:
+            above_water_score += 2
+        # Low texture suggests underwater (more uniform)
+        elif avg_texture < 50:
+            underwater_score += 2
+        elif avg_texture < 70:
             underwater_score += 1
-            
-        # Splash indicates surface
-        if avg_splash > 500:
-            above_water_score += 1
-            
-        # Sky detection
-        if avg_sky > 0.1:
+        
+        # 3. Top brighter than bottom (sky/ceiling above)
+        if avg_bright_gradient > 10:
+            above_water_score += 2
+        elif avg_bright_gradient > 0:
             above_water_score += 1
         
-        # Determine final water position
-        if above_water_score > underwater_score + 1:
+        # 4. White/splash ratio
+        if avg_white > 0.02:
+            above_water_score += 1
+        
+        # ==========================================
+        # UNDERWATER INDICATORS
+        # ==========================================
+        
+        # 5. Bottom darker than top (pool floor is darker)
+        if bottom_darker_pct > 0.6:
+            underwater_score += 3
+        elif bottom_darker_pct > 0.3:
+            underwater_score += 2
+        
+        # 6. High saturation uniformity (underwater is uniformly blue)
+        if avg_sat_uniformity > 0.92:
+            underwater_score += 3
+        elif avg_sat_uniformity > 0.85:
+            underwater_score += 2
+        elif avg_sat_uniformity > 0.75:
+            underwater_score += 1
+        # Low uniformity suggests above water (different regions)
+        elif avg_sat_uniformity < 0.7:
+            above_water_score += 1
+        
+        # 7. Vertical lines at bottom (pool floor T-marks)
+        if avg_vertical_lines_bottom > 3:
+            underwater_score += 2
+        elif avg_vertical_lines_bottom > 1:
+            underwater_score += 1
+        
+        # 8. Edge density patterns
+        # Underwater: more edges at top (wavy surface) or bottom (pool floor)
+        # Above water: edges more distributed
+        if avg_top_edge_density > 0.08 and avg_bottom_edge_density > 0.06:
+            underwater_score += 1
+        
+        # 9. Pool bottom lane lines detected by edge detector
+        if has_pool_bottom_lanes and avg_horizontal_lines < 30:
+            underwater_score += 2
+        
+        # 10. Color variance - underwater has moderate to low variance
+        if avg_color_variance < 30:
+            underwater_score += 2
+        elif avg_color_variance < 45:
+            underwater_score += 1
+        elif avg_color_variance > 60:
+            above_water_score += 1
+        
+        # 11. High blue ratio with uniform saturation = underwater
+        if avg_blue > 0.8 and avg_sat_uniformity > 0.85:
+            underwater_score += 2
+        
+        # ==========================================
+        # FINAL DETERMINATION
+        # ==========================================
+        
+        # Calculate difference
+        score_diff = above_water_score - underwater_score
+        
+        if score_diff >= 3:
             self.context.water_position = WaterPosition.ABOVE_WATER
-            water_confidence = min(0.9, 0.5 + (above_water_score - underwater_score) * 0.1)
-        elif underwater_score > above_water_score + 1:
+            water_confidence = min(0.95, 0.6 + score_diff * 0.05)
+        elif score_diff <= -3:
             self.context.water_position = WaterPosition.UNDERWATER
-            water_confidence = min(0.9, 0.5 + (underwater_score - above_water_score) * 0.1)
+            water_confidence = min(0.95, 0.6 + abs(score_diff) * 0.05)
+        elif score_diff > 0:
+            self.context.water_position = WaterPosition.ABOVE_WATER
+            water_confidence = 0.55 + score_diff * 0.05
+        elif score_diff < 0:
+            self.context.water_position = WaterPosition.UNDERWATER
+            water_confidence = 0.55 + abs(score_diff) * 0.05
         else:
-            self.context.water_position = WaterPosition.MIXED
-            water_confidence = 0.5
+            # Tie - use aspect ratio as tiebreaker
+            # Underwater footage tends to be more square, above-water more wide
+            aspect_ratio = self.video_width / self.video_height if self.video_height > 0 else 1.0
+            if aspect_ratio > 1.6:
+                self.context.water_position = WaterPosition.ABOVE_WATER
+                water_confidence = 0.55
+            else:
+                self.context.water_position = WaterPosition.UNDERWATER
+                water_confidence = 0.55
         
         # === CAMERA VIEW DETECTION ===
         # Use multiple signals: video aspect ratio, landmark geometry, body orientation
@@ -1180,7 +1636,7 @@ class VideoContextDetector:
         # Set overall confidence
         self.context.confidence = (water_confidence + view_confidence) / 2
         self.context.avg_blue_ratio = avg_blue
-        self.context.has_lane_lines = has_lanes
+        self.context.has_lane_lines = has_pool_bottom_lanes
         self.context.has_splash = avg_splash > 300
         self.context.detection_frames = len(self.frame_analyses)
         
@@ -1509,6 +1965,9 @@ class SwimAnalyzer:
         # Dropped elbow tracking (only during Pull phase for catch analysis)
         self.dropped_elbow_frames = 0
         self.pull_phase_frames = 0
+        
+        # Glide tracking
+        self.glide_frames = 0
 
     @st.cache_resource
     @staticmethod
@@ -1611,6 +2070,138 @@ class SwimAnalyzer:
 
         conf = vis_sum / vis_count if vis_count > 0 else 0.0
         
+        # === POSE VALIDATION ===
+        # Reject false positives where MediaPipe detects pool lane markings as a person
+        # A valid human pose should have:
+        # 1. Reasonable body proportions (not too stretched or compressed)
+        # 2. Shoulder width > 0 (not a single line)
+        # 3. Body parts in realistic relative positions
+        # 4. NOT be a pool floor marking (dark blue in bottom of frame)
+        
+        def validate_pose(lm_pixel, frame_bgr, frame_h, frame_w):
+            """Validate that detected pose is actually a human, not a pool lane marking"""
+            try:
+                # Get key measurements
+                left_shoulder = np.array(lm_pixel["left_shoulder"])
+                right_shoulder = np.array(lm_pixel["right_shoulder"])
+                left_hip = np.array(lm_pixel["left_hip"])
+                right_hip = np.array(lm_pixel["right_hip"])
+                nose = np.array(lm_pixel["nose"])
+                left_ankle = np.array(lm_pixel["left_ankle"])
+                right_ankle = np.array(lm_pixel["right_ankle"])
+                
+                # 1. Shoulder width should be reasonable (not near zero)
+                shoulder_width = np.linalg.norm(left_shoulder - right_shoulder)
+                min_shoulder_width = min(frame_w, frame_h) * 0.02  # At least 2% of frame
+                if shoulder_width < min_shoulder_width:
+                    return False, "shoulders too narrow"
+                
+                # 2. Hip width should be reasonable
+                hip_width = np.linalg.norm(left_hip - right_hip)
+                if hip_width < min_shoulder_width * 0.5:
+                    return False, "hips too narrow"
+                
+                # 3. Torso length should be reasonable
+                mid_shoulder = (left_shoulder + right_shoulder) / 2
+                mid_hip = (left_hip + right_hip) / 2
+                torso_length = np.linalg.norm(mid_shoulder - mid_hip)
+                
+                # Torso should be at least as long as shoulder width (roughly)
+                if torso_length < shoulder_width * 0.3:
+                    return False, "torso too short"
+                
+                # 4. Body shouldn't be extremely elongated (like a lane line)
+                body_height = max(
+                    np.linalg.norm(nose - mid_hip),
+                    torso_length
+                )
+                body_width = max(shoulder_width, hip_width)
+                
+                aspect_ratio = body_height / (body_width + 1)
+                if aspect_ratio > 15:
+                    return False, "too elongated"
+                
+                # 5. Nose should be reasonably close to shoulders
+                nose_to_shoulders = np.linalg.norm(nose - mid_shoulder)
+                if nose_to_shoulders > torso_length * 3:
+                    return False, "head too far from body"
+                
+                # 6. All key points should be within frame bounds
+                margin = 0.1
+                for name, (x, y) in lm_pixel.items():
+                    if x < -frame_w * margin or x > frame_w * (1 + margin):
+                        return False, f"{name} out of frame horizontally"
+                    if y < -frame_h * margin or y > frame_h * (1 + margin):
+                        return False, f"{name} out of frame vertically"
+                
+                # === POOL FLOOR MARKING DETECTION ===
+                # Pool floor markings are:
+                # - Located in bottom portion of frame (in above-water footage)
+                # - Dark blue/teal colored (not skin tones)
+                
+                # 7. Check if all major body points are in bottom 60% of frame
+                all_points = [nose, left_shoulder, right_shoulder, mid_hip, left_ankle, right_ankle]
+                points_in_bottom = sum(1 for p in all_points if p[1] > frame_h * 0.4)
+                
+                if points_in_bottom >= 5:  # Most points in bottom portion
+                    # Sample colors around the detected "body"
+                    all_x = [p[0] for p in all_points]
+                    all_y = [p[1] for p in all_points]
+                    min_x = max(0, int(min(all_x)) - 10)
+                    max_x = min(frame_w-1, int(max(all_x)) + 10)
+                    min_y = max(0, int(min(all_y)) - 10)
+                    max_y = min(frame_h-1, int(max(all_y)) + 10)
+                    
+                    if max_x > min_x + 20 and max_y > min_y + 20:
+                        roi = frame_bgr[min_y:max_y, min_x:max_x]
+                        
+                        if roi.size > 100:
+                            hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+                            
+                            # Check for dark pool marking colors (dark blue/teal tiles)
+                            lower_pool_mark = np.array([85, 30, 20])
+                            upper_pool_mark = np.array([135, 255, 140])
+                            pool_mark_mask = cv2.inRange(hsv_roi, lower_pool_mark, upper_pool_mark)
+                            pool_mark_ratio = np.sum(pool_mark_mask > 0) / (roi.shape[0] * roi.shape[1])
+                            
+                            # Check for skin tones
+                            lower_skin = np.array([0, 20, 70])
+                            upper_skin = np.array([25, 150, 255])
+                            skin_mask = cv2.inRange(hsv_roi, lower_skin, upper_skin)
+                            skin_ratio = np.sum(skin_mask > 0) / (roi.shape[0] * roi.shape[1])
+                            
+                            # If mostly dark pool marking color and very little skin = reject
+                            if pool_mark_ratio > 0.25 and skin_ratio < 0.08:
+                                return False, "pool floor marking detected"
+                            
+                            # Check for cyan/teal water color (pool water around marking)
+                            lower_water = np.array([80, 30, 100])
+                            upper_water = np.array([110, 255, 255])
+                            water_mask = cv2.inRange(hsv_roi, lower_water, upper_water)
+                            water_ratio = np.sum(water_mask > 0) / (roi.shape[0] * roi.shape[1])
+                            
+                            # If very high water color + pool marking and no skin = floor marking
+                            if (water_ratio + pool_mark_ratio) > 0.7 and skin_ratio < 0.05:
+                                return False, "pool floor marking (water + marking colors)"
+                
+                # 8. Check minimum body size relative to frame
+                body_area = body_width * body_height
+                frame_area = frame_w * frame_h
+                body_ratio = body_area / frame_area
+                
+                if body_ratio < 0.003:  # Less than 0.3% of frame = too small
+                    return False, "detected body too small"
+                
+                return True, "valid"
+                
+            except Exception as e:
+                return False, f"validation error: {e}"
+        
+        is_valid_pose, validation_reason = validate_pose(lm_pixel, frame, h, w)
+        if not is_valid_pose:
+            # Not a valid human pose - skip this frame
+            return frame, None
+        
         # Continue context detection with landmarks
         was_complete = self.context_detector.detection_complete
         if not was_complete:
@@ -1624,10 +2215,43 @@ class SwimAnalyzer:
         if conf < self.conf_thresh:
             return frame, None
 
-        # Flip if upside-down (hip above shoulder in image = inverted video)
+        # Check for inverted video (upside-down footage)
+        # CRITICAL FIX: Do NOT flip above-water footage!
+        # Above-water footage perspective is always correct from the viewer's standpoint.
+        # Only consider flipping for confirmed UNDERWATER footage where camera might be inverted.
         is_inverted = False
-        if "left_hip" in lm_pixel and "left_shoulder" in lm_pixel:
-            is_inverted = lm_pixel["left_hip"][1] < lm_pixel["left_shoulder"][1]
+        
+        # ONLY consider flipping if we have HIGH CONFIDENCE that this is underwater footage
+        # AND the pose clearly indicates inversion
+        is_confirmed_underwater = (
+            self.context_detector.detection_complete and 
+            self.video_context.water_position == WaterPosition.UNDERWATER and
+            self.video_context.confidence > 0.7
+        )
+        
+        if is_confirmed_underwater:
+            # Get average positions
+            avg_hip_y = (lm_pixel["left_hip"][1] + lm_pixel["right_hip"][1]) / 2
+            avg_shoulder_y = (lm_pixel["left_shoulder"][1] + lm_pixel["right_shoulder"][1]) / 2
+            
+            # Calculate torso height for threshold
+            torso_height = abs(avg_hip_y - avg_shoulder_y)
+            
+            # Only consider inverted if hips are VERY significantly above shoulders
+            # (more than 50% of torso height, to be very conservative)
+            hip_above_threshold = avg_shoulder_y - avg_hip_y > torso_height * 0.5
+            
+            # Additional check: nose should be well below shoulders in inverted footage
+            nose_below_shoulders = False
+            if "nose" in lm_pixel:
+                nose_below_shoulders = lm_pixel["nose"][1] > avg_shoulder_y + torso_height * 0.3
+            
+            # Additional check: ankles should be above hips in inverted footage
+            avg_ankle_y = (lm_pixel["left_ankle"][1] + lm_pixel["right_ankle"][1]) / 2
+            ankles_above_hips = avg_ankle_y < avg_hip_y
+            
+            # Require ALL conditions for flipping
+            is_inverted = hip_above_threshold and nose_below_shoulders and ankles_above_hips
         
         if is_inverted:
             frame = cv2.flip(frame, -1)
@@ -1812,14 +2436,25 @@ class SwimAnalyzer:
 
         # NEW: Breathing penalty
         breath_penalty = BREATH_PULL_PENALTY if breathing_during_pull else 0
+        
+        # NEW: Compute glide metrics
+        is_gliding, glide_score, arm_extension = compute_glide_metrics(
+            lm_pixel, phase, elbow, horizontal_dev
+        )
+        
+        # Track glide frames
+        if is_gliding:
+            self.glide_frames += 1
 
-        # Weighted overall score
+        # Weighted overall score (updated to include glide)
+        # Weight distribution: Alignment 20%, EVF 20%, Roll 15%, Kick 15%, Torso 10%, Glide 10%, Breathing 10%
         score = (
-            alignment_score * 0.25 +
-            evf_score * 0.25 +
+            alignment_score * 0.20 +
+            evf_score * 0.20 +
             roll_score * 0.15 +
             kick_score * 0.15 +
             torso_score * 0.10 +
+            (glide_score if is_gliding else 70) * 0.10 +  # Glide score or neutral
             100 * 0.10  # Base breathing score
         ) - breath_penalty
 
@@ -1834,7 +2469,9 @@ class SwimAnalyzer:
             'kick_depth': kick_depth,
             'kick_symmetry': kick_sym,
             'breathing_during_pull': breathing_during_pull,
-            'score': score
+            'score': score,
+            'is_gliding': is_gliding,
+            'glide_score': glide_score
         }
 
         # Draw enhanced technique panels
@@ -1849,7 +2486,9 @@ class SwimAnalyzer:
             'kick_depth': 0.25,
             'kick_symmetry': 5.0,
             'breathing_during_pull': False,
-            'score': 95
+            'score': 95,
+            'is_gliding': True,
+            'glide_score': 90
         }
         draw_technique_panel_enhanced(frame, 180, "IDEAL REFERENCE", ideal_metrics, "Pull", True, 'N')
 
@@ -1890,7 +2529,10 @@ class SwimAnalyzer:
             wrist_velocity_y=wrist_velocity_y,
             alignment_score=alignment_score,
             evf_score=evf_score,
-            breathing_during_pull=breathing_during_pull
+            breathing_during_pull=breathing_during_pull,
+            is_gliding=is_gliding,
+            glide_score=glide_score,
+            arm_extension=arm_extension
         )
         self.metrics.append(metrics)
 
@@ -1999,6 +2641,21 @@ class SwimAnalyzer:
             side = "left" if self.breath_l > self.breath_r else "right"
             diagnostics.append(f"💡 Breathing is asymmetric (favoring {side}) - practice bilateral breathing.")
 
+        # Calculate glide metrics
+        glide_metrics = [m for m in high_conf_metrics if m.is_gliding]
+        glide_ratio = (len(glide_metrics) / len(high_conf_metrics) * 100) if high_conf_metrics else 0
+        avg_glide_score = statistics.mean([m.glide_score for m in glide_metrics]) if glide_metrics else 0
+        
+        # 8. GLIDE assessment
+        if glide_ratio < 10:
+            diagnostics.append("🚨 MINIMAL GLIDE detected - you're rushing your stroke! Extend your lead arm and glide briefly after each entry to maximize distance per stroke.")
+        elif glide_ratio < 20:
+            diagnostics.append("⚠️ Low glide ratio ({:.0f}%) - try extending your lead arm longer before starting the catch. This improves efficiency.".format(glide_ratio))
+        elif glide_ratio > 40:
+            diagnostics.append("💡 High glide ratio ({:.0f}%) - good for distance swimming! For sprints, you may want to reduce glide time.".format(glide_ratio))
+        elif avg_glide_score < 60 and glide_ratio >= 15:
+            diagnostics.append("💡 Glide detected but form could improve - focus on full arm extension and streamlined body during glide phase.")
+
         if not diagnostics:
             diagnostics.append("✅ Great technique! Keep up the good work.")
 
@@ -2029,7 +2686,12 @@ class SwimAnalyzer:
             total_breaths=self.breath_l + self.breath_r,
             diagnostics=diagnostics,
             video_context=self.video_context,
-            available_metrics=self.available_metrics
+            available_metrics=self.available_metrics,
+            # Glide metrics
+            glide_ratio=glide_ratio,
+            avg_glide_score=avg_glide_score,
+            glide_frames=self.glide_frames,
+            total_analyzed_frames=len(high_conf_metrics)
         )
 
 # ─────────────────────────────────────────────
@@ -2329,6 +2991,9 @@ def main():
 
     st.title("🏊 Freestyle Swim Technique Analyzer Pro v2")
     st.markdown("AI-powered analysis with **enhanced biomechanical metrics**")
+    
+    # Important notice about video requirements
+    st.warning("⚠️ **Full body must be visible for an accurate analysis.** Ensure the swimmer's entire body (head to feet) is in frame throughout the video.")
 
     if not MEDIAPIPE_TASKS_AVAILABLE:
         st.error("MediaPipe Tasks not installed. Run: pip install mediapipe>=0.10.14")
@@ -2367,30 +3032,26 @@ def main():
         
         st.divider()
         
-        # Video Context Settings
-        st.subheader("📹 Video Settings")
+        # Detection Settings with explanations
+        st.subheader("Detection Settings")
         
-        auto_detect = st.checkbox("Auto-detect camera angle & water position", value=True)
+        conf_thresh = st.slider("Confidence Threshold", 0.3, 0.7, DEFAULT_CONF_THRESHOLD, 0.05)
+        st.caption("""
+        **What it does**: Filters out frames where pose detection is uncertain.  
+        **Ideal setting**: **0.5** (default) - balances accuracy with data retention.  
+        ↑ Higher = stricter, fewer frames analyzed but more accurate.  
+        ↓ Lower = more frames but may include errors from splashing/bubbles.
+        """)
         
-        if not auto_detect:
-            st.caption("Manual override:")
-            manual_camera = st.selectbox("Camera Angle", 
-                ["Side View", "Front View", "Top View"],
-                help="Side: See swimmer from the side. Front: Facing the swimmer. Top: Looking down from above.")
-            
-            manual_water = st.selectbox("Water Position",
-                ["Underwater", "Above Water", "Mixed/Waterline"],
-                help="Underwater: Camera below surface. Above: Camera above surface. Mixed: Waterline visible.")
-            
-            # Map to enums
-            camera_map = {"Side View": CameraView.SIDE, "Front View": CameraView.FRONT, "Top View": CameraView.TOP}
-            water_map = {"Underwater": WaterPosition.UNDERWATER, "Above Water": WaterPosition.ABOVE_WATER, "Mixed/Waterline": WaterPosition.MIXED}
-            manual_camera_view = camera_map[manual_camera]
-            manual_water_position = water_map[manual_water]
-        else:
-            manual_camera_view = None
-            manual_water_position = None
-            st.caption("The analyzer will automatically detect your video type in the first few seconds.")
+        yaw_thresh = st.slider("Breath Detection Sensitivity", 0.05, 0.3, DEFAULT_YAW_THRESHOLD, 0.01)
+        st.caption("""
+        **What it does**: Detects head rotation for breath timing analysis.  
+        **Ideal setting**: **0.15** (default) - catches most breaths without false positives.  
+        ↑ Higher = only detects very pronounced head turns.  
+        ↓ Lower = more sensitive, may count minor head movements as breaths.
+        """)
+        
+        st.divider()
         
         # Show what metrics are available based on view
         with st.expander("📊 Metrics by View Type"):
@@ -2416,38 +3077,74 @@ def main():
             - Entry angle
             - Breathing side
             """)
-        
-        st.divider()
-        
-        # Detection Settings with explanations
-        st.subheader("Detection Settings")
-        
-        conf_thresh = st.slider("Confidence Threshold", 0.3, 0.7, DEFAULT_CONF_THRESHOLD, 0.05)
-        st.caption("""
-        **What it does**: Filters out frames where pose detection is uncertain.  
-        **Ideal setting**: **0.5** (default) - balances accuracy with data retention.  
-        ↑ Higher = stricter, fewer frames analyzed but more accurate.  
-        ↓ Lower = more frames but may include errors from splashing/bubbles.
-        """)
-        
-        yaw_thresh = st.slider("Breath Detection Sensitivity", 0.05, 0.3, DEFAULT_YAW_THRESHOLD, 0.01)
-        st.caption("""
-        **What it does**: Detects head rotation for breath timing analysis.  
-        **Ideal setting**: **0.15** (default) - catches most breaths without false positives.  
-        ↑ Higher = only detects very pronounced head turns.  
-        ↓ Lower = more sensitive, may count minor head movements as breaths.
-        """)
 
     athlete = AthleteProfile(height, discipline)
 
-    uploaded = st.file_uploader("📹 Upload swimming video", type=["mp4", "mov", "avi"])
+    # ═══════════════════════════════════════════════════════════════
+    # MANDATORY VIDEO TYPE SELECTION
+    # ═══════════════════════════════════════════════════════════════
+    
+    st.subheader("📹 Video Type Selection (Required)")
+    st.markdown("**Select your video type before uploading.** This ensures accurate analysis.")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        video_type = st.radio(
+            "Select video type:",
+            options=[
+                "Side View - Underwater",
+                "Side View - Above Water",
+                "Front View - Underwater",
+                "Front View - Above Water"
+            ],
+            index=None,  # No default selection
+            help="Choose the type that best matches your video. Side view = camera sees swimmer from the side. Front view = camera faces the swimmer."
+        )
+    
+    with col2:
+        st.markdown("""
+        **📐 Side View**: Camera positioned to see the swimmer from the side (most common for technique analysis)
+        
+        **👤 Front View**: Camera faces the swimmer head-on (good for body roll and symmetry)
+        
+        **🌊 Above Water**: Camera is above the water surface
+        
+        **🤿 Underwater**: Camera is below the water surface
+        """)
+    
+    # Map selection to enums
+    video_type_map = {
+        "Side View - Underwater": (CameraView.SIDE, WaterPosition.UNDERWATER),
+        "Side View - Above Water": (CameraView.SIDE, WaterPosition.ABOVE_WATER),
+        "Front View - Underwater": (CameraView.FRONT, WaterPosition.UNDERWATER),
+        "Front View - Above Water": (CameraView.FRONT, WaterPosition.ABOVE_WATER),
+    }
+    
+    if video_type:
+        selected_camera, selected_water = video_type_map[video_type]
+        st.success(f"✅ Selected: **{video_type}**")
+    else:
+        st.info("👆 Please select a video type above before uploading your video.")
+    
+    st.divider()
 
-    if uploaded:
+    uploaded = st.file_uploader("📹 Upload swimming video", type=["mp4", "mov", "avi"], disabled=(video_type is None))
+    
+    if video_type is None and uploaded:
+        st.error("⚠️ Please select a video type above before processing.")
+        return
+
+    if uploaded and video_type:
+        # Use the user-selected video type (mandatory override)
+        manual_camera_view = selected_camera
+        manual_water_position = selected_water
+        
         try:
             analyzer = SwimAnalyzer(
                 athlete, conf_thresh, yaw_thresh,
-                manual_camera_view=manual_camera_view if not auto_detect else None,
-                manual_water_position=manual_water_position if not auto_detect else None
+                manual_camera_view=manual_camera_view,
+                manual_water_position=manual_water_position
             )
         except Exception as e:
             st.error(f"Failed to initialize analyzer: {e}")
@@ -2468,9 +3165,11 @@ def main():
         fourcc = cv2.VideoWriter_fourcc(*'XVID')  # Use XVID for intermediate
         writer = cv2.VideoWriter(temp_out_path, fourcc, fps, (w, h))
 
-        progress = st.progress(0)
-        status = st.empty()
-
+        # Progress bars for processing and encoding
+        st.markdown("### ⏳ Processing Video")
+        processing_progress = st.progress(0)
+        processing_status = st.empty()
+        
         frame_idx = 0
         try:
             while cap.isOpened():
@@ -2486,22 +3185,56 @@ def main():
 
                 frame_idx += 1
                 if total > 0:
-                    progress.progress(min(frame_idx / total, 1.0))
-                status.text(f"Processing frame {frame_idx}/{total}")
+                    pct = frame_idx / total
+                    processing_progress.progress(min(pct, 1.0))
+                processing_status.text(f"🎬 Analyzing frame {frame_idx}/{total} ({frame_idx/total*100:.1f}%)")
 
             cap.release()
             writer.release()
             
-            # Re-encode to H.264 MP4 for browser compatibility
-            status.text("Encoding video for browser playback...")
+            processing_status.text("✅ Frame analysis complete!")
+            
+            # ═══════════════════════════════════════════════════════════════
+            # ENCODING WITH PROGRESS BAR
+            # ═══════════════════════════════════════════════════════════════
+            
+            st.markdown("### 🎥 Encoding Video")
+            encoding_progress = st.progress(0)
+            encoding_status = st.empty()
+            
+            encoding_status.text("🔄 Encoding video for browser playback (0%)...")
             out_path = tempfile.mktemp(suffix=".mp4")
             
             encoding_success = False
             
-            # Method 1: Use MoviePy (pure Python, no ffmpeg binary required)
+            # Method 1: Use MoviePy with progress callback
             if MOVIEPY_AVAILABLE:
                 try:
+                    encoding_status.text("🔄 Encoding video (initializing)...")
+                    encoding_progress.progress(0.1)
+                    
                     clip = VideoFileClip(temp_out_path)
+                    duration = clip.duration
+                    
+                    # Custom progress logger for moviepy
+                    class ProgressLogger:
+                        def __init__(self, progress_bar, status_text, duration):
+                            self.progress_bar = progress_bar
+                            self.status_text = status_text
+                            self.duration = duration
+                            self.last_pct = 0
+                        
+                        def __call__(self, t=None, *args, **kwargs):
+                            if t is not None and self.duration > 0:
+                                pct = min(t / self.duration, 1.0)
+                                if pct - self.last_pct > 0.02:  # Update every 2%
+                                    self.progress_bar.progress(pct)
+                                    self.status_text.text(f"🔄 Encoding video ({pct*100:.0f}%)...")
+                                    self.last_pct = pct
+                    
+                    encoding_progress.progress(0.2)
+                    encoding_status.text("🔄 Encoding video (20%)...")
+                    
                     clip.write_videofile(
                         out_path, 
                         codec='libx264',
@@ -2512,13 +3245,21 @@ def main():
                     )
                     clip.close()
                     encoding_success = True
+                    
+                    encoding_progress.progress(1.0)
+                    encoding_status.text("✅ Encoding complete!")
+                    
                 except Exception as e:
-                    st.warning(f"MoviePy encoding failed: {e}. Trying fallback...")
+                    encoding_status.text(f"⚠️ MoviePy encoding failed: {e}. Trying fallback...")
+                    encoding_progress.progress(0.3)
             
             # Method 2: Fallback to ffmpeg binary if available
             if not encoding_success:
                 import subprocess
                 try:
+                    encoding_status.text("🔄 Encoding with ffmpeg (50%)...")
+                    encoding_progress.progress(0.5)
+                    
                     subprocess.run([
                         'ffmpeg', '-y', '-i', temp_out_path,
                         '-c:v', 'libx264',
@@ -2529,14 +3270,21 @@ def main():
                         out_path
                     ], check=True, capture_output=True, timeout=120)
                     encoding_success = True
+                    
+                    encoding_progress.progress(1.0)
+                    encoding_status.text("✅ Encoding complete!")
+                    
                 except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
-                    pass
+                    encoding_status.text("⚠️ ffmpeg not available, using fallback...")
+                    encoding_progress.progress(0.7)
             
             # Method 3: Last resort - just use the AVI file (may not play in browser)
             if not encoding_success:
                 import shutil
                 out_path = temp_out_path.replace('.avi', '.mp4')
                 shutil.copy(temp_out_path, out_path)
+                encoding_progress.progress(1.0)
+                encoding_status.text("⚠️ Video encoding limited - download the video for best playback")
                 st.warning("⚠️ Video encoding limited - download the video for best playback")
             
             # Clean up temp AVI
@@ -2572,44 +3320,54 @@ def main():
 
             st.success("✅ Analysis complete!")
             
-            # Display detected video context
-            if summary.video_context:
-                ctx = summary.video_context
-                ctx_icon = "🎥" if ctx.camera_view == CameraView.SIDE else "👤" if ctx.camera_view == CameraView.FRONT else "🔝"
-                water_icon = "🌊" if ctx.water_position == WaterPosition.UNDERWATER else "☀️" if ctx.water_position == WaterPosition.ABOVE_WATER else "〰️"
-                confidence_color = "#22c55e" if ctx.confidence >= 0.7 else "#eab308" if ctx.confidence >= 0.5 else "#ef4444"
-                
+            # Display video type information - User selected vs Auto-detected
+            st.markdown("### 📹 Video Type")
+            
+            col_user, col_auto = st.columns(2)
+            
+            with col_user:
+                user_ctx_icon = "🎥" if selected_camera == CameraView.SIDE else "👤"
+                user_water_icon = "🤿" if selected_water == WaterPosition.UNDERWATER else "☀️"
                 st.markdown(f"""
-                <div style="background: rgba(30, 41, 59, 0.8); border-radius: 12px; padding: 16px; margin-bottom: 20px; border-left: 4px solid #06b6d4;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
-                        <div>
-                            <span style="color: #94a3b8; font-size: 12px; text-transform: uppercase;">Detected Video Type</span>
-                            <div style="font-size: 18px; font-weight: 600; color: white; margin-top: 4px;">
-                                {ctx_icon} {ctx.camera_view.value} &nbsp;•&nbsp; {water_icon} {ctx.water_position.value}
-                            </div>
-                        </div>
-                        <div style="text-align: right;">
-                            <span style="color: #94a3b8; font-size: 12px;">Detection Confidence</span>
-                            <div style="font-size: 18px; font-weight: 600; color: {confidence_color};">{ctx.confidence*100:.0f}%</div>
-                        </div>
-                    </div>
-                    <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(100, 116, 139, 0.3);">
-                        <span style="color: #64748b; font-size: 12px;">
-                            {'📊 Full metrics available (side underwater view)' if ctx.camera_view == CameraView.SIDE and ctx.water_position == WaterPosition.UNDERWATER else 
-                             '📊 Limited metrics (best results with side underwater view)' if ctx.camera_view != CameraView.SIDE or ctx.water_position != WaterPosition.UNDERWATER else ''}
-                        </span>
+                <div style="background: rgba(34, 197, 94, 0.15); border-radius: 12px; padding: 16px; border-left: 4px solid #22c55e;">
+                    <span style="color: #94a3b8; font-size: 12px; text-transform: uppercase;">Your Selection (Used for Analysis)</span>
+                    <div style="font-size: 18px; font-weight: 600; color: #22c55e; margin-top: 4px;">
+                        {user_ctx_icon} {selected_camera.value} &nbsp;•&nbsp; {user_water_icon} {selected_water.value}
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
-                
-                # Show warning if not optimal view
-                if ctx.camera_view != CameraView.SIDE or ctx.water_position != WaterPosition.UNDERWATER:
-                    st.warning(f"""
-                    **Note:** Your video appears to be **{ctx.camera_view.value}** / **{ctx.water_position.value}**.
+            
+            with col_auto:
+                if summary.video_context:
+                    ctx = summary.video_context
+                    ctx_icon = "🎥" if ctx.camera_view == CameraView.SIDE else "👤" if ctx.camera_view == CameraView.FRONT else "🔝"
+                    water_icon = "🤿" if ctx.water_position == WaterPosition.UNDERWATER else "☀️" if ctx.water_position == WaterPosition.ABOVE_WATER else "〰️"
+                    confidence_color = "#22c55e" if ctx.confidence >= 0.7 else "#eab308" if ctx.confidence >= 0.5 else "#ef4444"
                     
-                    For the most accurate analysis (EVF, body alignment, kick depth), use **Side View Underwater** footage.
-                    Current view provides: {', '.join(summary.available_metrics.keys()) if summary.available_metrics else 'basic metrics'}
-                    """)
+                    # Check if auto-detection matches user selection
+                    matches = (ctx.camera_view == selected_camera and ctx.water_position == selected_water)
+                    match_icon = "✅" if matches else "⚠️"
+                    border_color = "#22c55e" if matches else "#eab308"
+                    
+                    st.markdown(f"""
+                    <div style="background: rgba(30, 41, 59, 0.8); border-radius: 12px; padding: 16px; border-left: 4px solid {border_color};">
+                        <span style="color: #94a3b8; font-size: 12px; text-transform: uppercase;">Auto-Detection Result {match_icon}</span>
+                        <div style="font-size: 18px; font-weight: 600; color: white; margin-top: 4px;">
+                            {ctx_icon} {ctx.camera_view.value} &nbsp;•&nbsp; {water_icon} {ctx.water_position.value}
+                        </div>
+                        <div style="font-size: 12px; color: {confidence_color}; margin-top: 4px;">Confidence: {ctx.confidence*100:.0f}%</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    if not matches:
+                        st.caption("ℹ️ Auto-detection differs from your selection. Your selection is used for analysis.")
+                else:
+                    st.markdown("""
+                    <div style="background: rgba(30, 41, 59, 0.8); border-radius: 12px; padding: 16px; border-left: 4px solid #64748b;">
+                        <span style="color: #94a3b8; font-size: 12px;">Auto-Detection</span>
+                        <div style="font-size: 14px; color: #64748b; margin-top: 4px;">Not enough data for detection</div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
             # NEW: Render visual metrics component with body silhouettes
             st.subheader("📊 Technique Breakdown")
@@ -2621,9 +3379,50 @@ def main():
                 'body_roll': summary.avg_body_roll,
                 'kick_depth': summary.avg_kick_depth,
                 'kick_symmetry': summary.avg_kick_symmetry,
+                'glide_ratio': summary.glide_ratio,        # ADD THIS LINE
+                'glide_score': summary.avg_glide_score,    # ADD THIS LINE
             }
-            render_swim_metrics_component(metrics_for_viz, height=400)
+            render_swim_metrics_component(metrics_for_viz, height=520)
+
+            # Display score cards in columns
+            col1, col2, col3 = st.columns(3)
             
+            with col1:
+                score_color = "#22c55e" if summary.avg_score >= 70 else "#eab308" if summary.avg_score >= 50 else "#ef4444"
+                score_status = "Excellent" if summary.avg_score >= 80 else "Good" if summary.avg_score >= 70 else "Fair" if summary.avg_score >= 50 else "Needs Work"
+                st.markdown(f"""
+                <div style="background: linear-gradient(135deg, rgba(6,182,212,0.2) 0%, rgba(37,99,235,0.2) 100%); border: 2px solid {score_color}; border-radius: 16px; padding: 20px; text-align: center;">
+                    <h4 style="color: #94a3b8; margin: 0 0 8px 0; font-size: 14px;">OVERALL SCORE</h4>
+                    <div style="font-size: 48px; font-weight: bold; color: {score_color};">{summary.avg_score:.1f}</div>
+                    <div style="font-size: 12px; color: {score_color}; font-weight: 600;">{score_status}</div>
+                    <div style="font-size: 11px; color: #64748b; margin-top: 8px;">🎯 Ideal: 70+ (Good) | 80+ (Excellent)</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            with col2:
+                align_color = "#22c55e" if summary.avg_vertical_drop <= 8 else "#eab308" if summary.avg_vertical_drop <= 15 else "#ef4444"
+                align_status = "Streamlined" if summary.avg_vertical_drop <= 5 else "Good" if summary.avg_vertical_drop <= 8 else "Hip Drop" if summary.avg_vertical_drop <= 15 else "Sinking"
+                st.markdown(f"""
+                <div style="background: linear-gradient(135deg, rgba(5,150,105,0.2) 0%, rgba(16,185,129,0.2) 100%); border: 2px solid {align_color}; border-radius: 16px; padding: 20px; text-align: center;">
+                    <h4 style="color: #94a3b8; margin: 0 0 8px 0; font-size: 14px;">BODY ALIGNMENT</h4>
+                    <div style="font-size: 48px; font-weight: bold; color: {align_color};">{summary.avg_vertical_drop:.1f}°</div>
+                    <div style="font-size: 12px; color: {align_color}; font-weight: 600;">{align_status}</div>
+                    <div style="font-size: 11px; color: #64748b; margin-top: 8px;">🎯 Ideal: &lt;8° (flat body position)</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            with col3:
+                evf_color = "#22c55e" if summary.dropped_elbow_pct <= 10 else "#eab308" if summary.dropped_elbow_pct <= 30 else "#ef4444"
+                evf_status = "High Elbow" if summary.dropped_elbow_pct <= 10 else "Some Drop" if summary.dropped_elbow_pct <= 30 else "Dropped Elbow"
+                st.markdown(f"""
+                <div style="background: linear-gradient(135deg, rgba(124,58,237,0.2) 0%, rgba(168,85,247,0.2) 100%); border: 2px solid {evf_color}; border-radius: 16px; padding: 20px; text-align: center;">
+                    <h4 style="color: #94a3b8; margin: 0 0 8px 0; font-size: 14px;">EVF (CATCH)</h4>
+                    <div style="font-size: 48px; font-weight: bold; color: {evf_color};">{summary.dropped_elbow_pct:.0f}%</div>
+                    <div style="font-size: 12px; color: {evf_color}; font-weight: 600;">{evf_status}</div>
+                    <div style="font-size: 11px; color: #64748b; margin-top: 8px;">🎯 Ideal: &lt;10% dropped elbow frames</div>
+                </div>
+                """, unsafe_allow_html=True)
+
             # Metrics row
             cols = st.columns(5)
             cols[0].metric("Stroke Rate", f"{summary.stroke_rate:.1f} spm")
