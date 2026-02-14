@@ -251,76 +251,6 @@ def get_kick_silhouette(depth, symmetry):
         <text x="10" y="130" fill="#64748b" font-size="8">sym: {symmetry:.1f}°</text>
     </svg>
     '''
-def get_glide_silhouette(glide_ratio, glide_score):
-    """Generate SVG for glide visualization - shows streamlined swimmer in glide position"""
-    # Good glide: ratio 15-30%, score 70+
-    # Determine color based on glide ratio
-    if glide_ratio >= 15 and glide_ratio <= 35:
-        color = "#22c55e"  # Green - good glide
-    elif glide_ratio >= 10 or glide_ratio <= 40:
-        color = "#eab308"  # Yellow - OK
-    else:
-        color = "#ef4444"  # Red - needs work
-    
-    # Arm extension visualization (based on score)
-    arm_extension = min(40, glide_score * 0.4)  # Max 40px extension
-    
-    return f'''
-    <svg viewBox="0 0 100 140" xmlns="http://www.w3.org/2000/svg">
-        <defs>
-            <filter id="glow5" x="-50%" y="-50%" width="200%" height="200%">
-                <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
-                <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
-            </filter>
-            <linearGradient id="bodyGrad5" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" style="stop-color:{color};stop-opacity:0.8" />
-                <stop offset="100%" style="stop-color:{color};stop-opacity:0.4" />
-            </linearGradient>
-            <linearGradient id="waterGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-                <stop offset="0%" style="stop-color:#0ea5e9;stop-opacity:0.3" />
-                <stop offset="100%" style="stop-color:#0369a1;stop-opacity:0.1" />
-            </linearGradient>
-        </defs>
-        
-        <!-- Water surface indicator -->
-        <rect x="0" y="0" width="100" height="30" fill="url(#waterGrad)"/>
-        <line x1="0" y1="30" x2="100" y2="30" stroke="#0ea5e9" stroke-width="2" opacity="0.5"/>
-        <text x="5" y="22" fill="#0ea5e9" font-size="7" opacity="0.7">surface</text>
-        
-        <!-- Streamlined body in glide position -->
-        <g filter="url(#glow5)" transform="translate(0, 20)">
-            <!-- Head -->
-            <ellipse cx="15" cy="45" rx="8" ry="6" fill="url(#bodyGrad5)"/>
-            
-            <!-- Extended lead arm (the key glide indicator) -->
-            <line x1="20" y1="42" x2="{20 + arm_extension}" y2="38" stroke="{color}" stroke-width="5" stroke-linecap="round"/>
-            <ellipse cx="{22 + arm_extension}" cy="37" rx="4" ry="2" fill="{color}" transform="rotate(-10, {22 + arm_extension}, 37)"/>
-            
-            <!-- Body/torso - streamlined -->
-            <ellipse cx="35" cy="48" rx="18" ry="8" fill="url(#bodyGrad5)"/>
-            
-            <!-- Trailing arm (recovering) -->
-            <line x1="28" y1="52" x2="18" y2="65" stroke="{color}" stroke-width="4" stroke-linecap="round" opacity="0.5"/>
-            
-            <!-- Hips -->
-            <ellipse cx="55" cy="50" rx="12" ry="7" fill="url(#bodyGrad5)"/>
-            
-            <!-- Legs - together and streamlined -->
-            <line x1="60" y1="50" x2="85" y2="52" stroke="{color}" stroke-width="8" stroke-linecap="round"/>
-            <ellipse cx="88" cy="52" rx="5" ry="3" fill="{color}"/>
-        </g>
-        
-        <!-- Glide arrows showing forward momentum -->
-        <g opacity="0.4">
-            <path d="M 70 75 L 85 75 L 82 72 M 85 75 L 82 78" stroke="{color}" stroke-width="1.5" fill="none"/>
-            <path d="M 75 82 L 90 82 L 87 79 M 90 82 L 87 85" stroke="{color}" stroke-width="1.5" fill="none"/>
-        </g>
-        
-        <!-- Metrics text -->
-        <text x="10" y="125" fill="#64748b" font-size="8">ratio: {glide_ratio:.0f}%</text>
-        <text x="55" y="125" fill="#64748b" font-size="8">score: {glide_score:.0f}</text>
-    </svg>
-    '''
 
 def get_swim_metrics_html(metrics: dict) -> str:
     """Generate complete HTML for swim metrics visualization"""
@@ -332,8 +262,6 @@ def get_swim_metrics_html(metrics: dict) -> str:
     roll = metrics.get('body_roll', 45)
     kick_d = metrics.get('kick_depth', 0.25)
     kick_s = metrics.get('kick_symmetry', 0)
-    glide_ratio = metrics.get('glide_ratio', 0)
-    glide_score = metrics.get('glide_score', 0)
     
     # Alignment now considers vertical drop as the primary issue
     h_class = get_viz_zone_class(v_drop, (0, 8), (0, 15))
@@ -362,20 +290,6 @@ def get_swim_metrics_html(metrics: dict) -> str:
     kick_label = get_viz_zone_label(kick_d, (0.15, 0.35), (0.10, 0.45))
     kick_color = get_viz_zone_color(kick_d, (0.15, 0.35), (0.10, 0.45))
     
-    # Glide classification: good = 15-35% ratio with score 70+
-    if glide_ratio >= 15 and glide_ratio <= 35 and glide_score >= 70:
-        glide_class = "good"
-        glide_label = "✓ Good"
-        glide_color = "#22c55e"
-    elif glide_ratio >= 10 and glide_ratio <= 40:
-        glide_class = "ok"
-        glide_label = "◐ OK"
-        glide_color = "#eab308"
-    else:
-        glide_class = "bad"
-        glide_label = "✗ Fix"
-        glide_color = "#ef4444"
-    
     html = f"""
     <!DOCTYPE html>
     <html>
@@ -402,9 +316,6 @@ def get_swim_metrics_html(metrics: dict) -> str:
             .metric-card.good {{ border-left: 4px solid #22c55e; }}
             .metric-card.ok {{ border-left: 4px solid #eab308; }}
             .metric-card.bad {{ border-left: 4px solid #ef4444; }}
-            .metric-card.wide {{
-                grid-column: span 2;
-            }}
             .metric-header {{
                 display: flex;
                 justify-content: space-between;
@@ -484,23 +395,6 @@ def get_swim_metrics_html(metrics: dict) -> str:
                 color: #64748b;
             }}
             .range-labels .warn {{ color: #f59e0b; }}
-            .glide-stats {{
-                display: flex;
-                gap: 24px;
-                margin-top: 8px;
-            }}
-            .glide-stat {{
-                text-align: center;
-            }}
-            .glide-stat-value {{
-                font-size: 24px;
-                font-weight: 700;
-            }}
-            .glide-stat-label {{
-                font-size: 10px;
-                color: #64748b;
-                text-transform: uppercase;
-            }}
         </style>
     </head>
     <body>
@@ -601,49 +495,13 @@ def get_swim_metrics_html(metrics: dict) -> str:
                     </div>
                 </div>
             </div>
-            
-            <!-- Glide - Full width card (NEW 5th CARD) -->
-            <div class="metric-card {glide_class} wide">
-                <div class="metric-header">
-                    <span class="metric-title">Glide (Distance Per Stroke)</span>
-                    <span class="metric-badge {glide_class}">{glide_label}</span>
-                </div>
-                <div class="metric-content">
-                    <div class="silhouette-container">{get_glide_silhouette(glide_ratio, glide_score)}</div>
-                    <div class="metric-details">
-                        <div class="glide-stats">
-                            <div class="glide-stat">
-                                <div class="glide-stat-value {glide_class}">{glide_ratio:.0f}<span class="metric-unit">%</span></div>
-                                <div class="glide-stat-label">Glide Ratio</div>
-                            </div>
-                            <div class="glide-stat">
-                                <div class="glide-stat-value {glide_class}">{glide_score:.0f}</div>
-                                <div class="glide-stat-label">Form Score</div>
-                            </div>
-                        </div>
-                        <div style="font-size: 10px; color: #64748b; margin: 8px 0 6px 0;">
-                            {'🎯 Good glide maximizes distance per stroke' if glide_ratio >= 15 else '⚠️ Extend lead arm longer before catching'}
-                        </div>
-                        <div class="range-bar">
-                            <div class="range-zone ok-zone" style="left: 17%; width: 50%;"></div>
-                            <div class="range-zone good-zone" style="left: 25%; width: 25%;"></div>
-                            <div class="range-indicator" style="left: {min(100, glide_ratio / 50 * 100):.1f}%; background: {glide_color};"></div>
-                        </div>
-                        <div class="range-labels">
-                            <span class="warn">← Rushing</span>
-                            <span>Optimal 15-35%</span>
-                            <span class="warn">Over-gliding →</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
         </div>
     </body>
     </html>
     """
     return html
 
-def render_swim_metrics_component(metrics: dict, height: int = 520):
+def render_swim_metrics_component(metrics: dict, height: int = 420):
     """Render swim metrics visualization in Streamlit"""
     html = get_swim_metrics_html(metrics)
     components.html(html, height=height, scrolling=False)
@@ -3379,10 +3237,8 @@ def main():
                 'body_roll': summary.avg_body_roll,
                 'kick_depth': summary.avg_kick_depth,
                 'kick_symmetry': summary.avg_kick_symmetry,
-                'glide_ratio': summary.glide_ratio,        # ADD THIS LINE
-                'glide_score': summary.avg_glide_score,    # ADD THIS LINE
             }
-            render_swim_metrics_component(metrics_for_viz, height=520)
+            render_swim_metrics_component(metrics_for_viz, height=440)
 
             # Display score cards in columns
             col1, col2, col3 = st.columns(3)
